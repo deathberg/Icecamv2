@@ -83,12 +83,21 @@ public final class NativeControlRouter {
     }
 
     public boolean sendColorCorrection(SharedPreferences prefs) {
-        if (!binder.connected()) return false;
-        if (!prefs.getBoolean("ReplacementActive", false)) return false;
+        return sendColorCorrectionIfEnabled(prefs) >= 0;
+    }
+
+    /** TX24 only when explicitly enabled — auto-apply must not darken the stream (2.0.9 regression). */
+    public int sendColorCorrectionIfEnabled(SharedPreferences prefs) {
+        if (!prefs.getBoolean("EnableTx24Color", false)) {
+            if (log != null) log.log("control", "TX24 skipped (EnableTx24Color=false)");
+            return -1;
+        }
+        if (!binder.connected()) return -1;
+        if (!prefs.getBoolean("ReplacementActive", false)) return -1;
         ColorCorrectionState c = ColorCorrectionState.load(prefs);
         int r = binder.setColorCorrection(c);
         if (log != null) log.log("control", "TX24 color result=" + r + " " + c.summary());
-        return r >= 0;
+        return r;
     }
 
     public boolean resetSeekRange() {

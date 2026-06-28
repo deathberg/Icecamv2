@@ -95,11 +95,30 @@ public final class RootBootstrap {
                 log.log("daemon", "already up " + probe);
                 return true;
             }
-            if (probe.vcplaxRunning && probe.serviceRegistered && !probe.binderReachable) {
-                log.log("daemon", "binder stale while vcplax up " + probe + " — soft wait");
+            if (probe.vcplaxRunning && probe.serviceRegistered) {
+                log.log("daemon", "vcplax up, binder stale " + probe + " — soft wait (no kill)");
                 binderProbe.clearCache();
-                if (waitForDaemon(5000, binderProbe)) {
+                if (waitForDaemon(12000, binderProbe)) {
                     log.log("daemon", "binder recovered " + probeDaemon(binderProbe));
+                    return true;
+                }
+                log.log("daemon", "binder still stale — redeploy hooks only, keep vcplax");
+                redeployHookLibs();
+                binderProbe.clearCache();
+                if (waitForDaemon(8000, binderProbe)) {
+                    log.log("daemon", "binder ok after hook redeploy " + probeDaemon(binderProbe));
+                    return true;
+                }
+                DaemonProbe after = probeDaemon(binderProbe);
+                if (after.vcplaxRunning && after.serviceRegistered) {
+                    log.log("daemon", "vcplax still alive after redeploy — skip full bootstrap " + after);
+                    return true;
+                }
+            }
+            if (probe.vcplaxRunning && !probe.serviceRegistered) {
+                log.log("daemon", "vcplax up, service missing " + probe + " — soft wait");
+                binderProbe.clearCache();
+                if (waitForDaemon(8000, binderProbe)) {
                     return true;
                 }
             }

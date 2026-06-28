@@ -21,7 +21,8 @@ public final class ColorCorrectionState {
         int mx = p.getInt("MonitorTargetX", 55);
         int my = p.getInt("MonitorTargetY", 380);
         s.x = p.getFloat("ColorX", mx / 100f);
-        s.y = p.getFloat("ColorY", my / 100f);
+        // MonitorTargetY is permille (380 → 0.38), not percent like X
+        s.y = p.getFloat("ColorY", my / 1000f);
         s.intensity = clamp(p.getFloat("ColorIntensity", p.getInt("Scale", 100) / 100f), 0.05f, 8f);
         s.diameter = clamp(p.getFloat("ColorDiameter", 1f), 0.05f, 8f);
         s.colorArgb = p.getInt("ColorArgb", 0);

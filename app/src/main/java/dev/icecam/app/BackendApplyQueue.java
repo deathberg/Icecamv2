@@ -6,7 +6,6 @@ import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import dev.icecam.app.runtime.CommandBus;
-import dev.icecam.app.ColorCorrectionState;
 
 /**
  * Process-wide serialized backend apply queue.
@@ -153,8 +152,6 @@ public final class BackendApplyQueue {
                 }
                 sleepMs(400);
                 NativeControlRouter controls = new NativeControlRouter(context, log, binder);
-                controls.resetSeekRange();
-                sleepMs(120);
                 if (!MediaTransformer.isVideoPath(req.path) && !req.path.contains("/baked/")) {
                     IceCamLog.w(log, "applyq", "image path — expect baked JPEG, src=" + req.path);
                 }
@@ -169,8 +166,7 @@ public final class BackendApplyQueue {
                 long tx11Ms = android.os.SystemClock.elapsedRealtime() - tx11Start;
                 sleepMs(200);
                 int settings = binder.applyPlaybackSettings(current, prefs.getBoolean("PlayisLoop", true));
-                ColorCorrectionState color = ColorCorrectionState.load(prefs);
-                int tx24 = binder.setColorCorrection(color);
+                int tx24 = controls.sendColorCorrectionIfEnabled(prefs);
                 boolean modeOk = VliveBinderClient.isSetModeOk(mode);
                 boolean playOk = VliveBinderClient.isPlayOk(play);
                 boolean active = modeOk && playOk;

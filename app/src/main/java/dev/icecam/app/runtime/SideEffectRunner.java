@@ -50,9 +50,8 @@ public final class SideEffectRunner {
                     boolean ok = false;
                     try {
                         IceCamLog.marker(log, "COMMIT", "source=" + c.source.name());
-                        controls.resetSeekRange();
                         controls.sendPlaybackSettings(state.transform, prefs);
-                        controls.sendColorCorrection(prefs);
+                        controls.sendColorCorrectionIfEnabled(prefs);
                         String path = resolveApplyPath(state);
                         if (path.length() > 0) BackendApplyQueue.get(context).enqueue(path, "runtime-commit-" + c.source.name().toLowerCase(), true);
                         ok = true;
