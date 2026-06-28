@@ -1,12 +1,14 @@
 package dev.icecam.app.runtime;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import dev.icecam.app.AppLogger;
 import dev.icecam.app.BackendApplyQueue;
 import dev.icecam.app.IceCamLog;
-import dev.icecam.app.RootBootstrap;
 import dev.icecam.app.MediaPaths;
 import dev.icecam.app.MediaTransformer;
+import dev.icecam.app.NativeControlRouter;
+import dev.icecam.app.RootBootstrap;
 import dev.icecam.app.TransformState;
 import dev.icecam.app.VliveBinderClient;
 import java.util.concurrent.ExecutorService;
@@ -17,6 +19,7 @@ public final class SideEffectRunner {
     private final AppLogger log;
     private final RootBootstrap root;
     private final VliveBinderClient binder;
+    private final NativeControlRouter controls;
     private final ExecutorService io = Executors.newSingleThreadExecutor(r -> new Thread(r, "icecam-runtime-effects"));
 
     public SideEffectRunner(Context context, AppLogger log) {
@@ -25,13 +28,21 @@ public final class SideEffectRunner {
         this.root = new RootBootstrap(this.context, log);
         this.binder = new VliveBinderClient(log);
         this.binder.setPreferredService(RootBootstrap.FIXED_SERVICE_NAME);
+        this.controls = new NativeControlRouter(this.context, log, binder);
     }
 
     public void run(RuntimeCommand c, AppState state, CommandBus bus) {
+        SharedPreferences prefs = context.getSharedPreferences("app_config", Context.MODE_PRIVATE);
         switch (c.type) {
+            case SET_LOOP:
+                prefs.edit().putBoolean("PlayisLoop", c.boolValue).apply();
+                if (binder.connected() && prefs.getBoolean("ReplacementActive", false)) {
+                    int r = binder.sendBoolCode(VliveBinderClient.TX_ZERO_17, c.boolValue);
+                    if (log != null) log.log("runtime", "TX17 loop=" + c.boolValue + " -> " + r);
+                }
+                break;
             case MUTATE_TRANSFORM:
-                // Realtime preview only. No JPEG bake, no backend replay.
-                sendTransformBestEffort(state.transform);
+                controls.dispatchLiveOp(c.op, state.transform, prefs);
                 break;
             case COMMIT:
                 io.execute(() -> {
@@ -39,9 +50,12 @@ public final class SideEffectRunner {
                     boolean ok = false;
                     try {
                         IceCamLog.marker(log, "COMMIT", "source=" + c.source.name());
-                        ok = sendTransformBestEffort(state.transform);
+                        controls.resetSeekRange();
+                        controls.sendPlaybackSettings(state.transform, prefs);
+                        controls.sendColorCorrection(prefs);
                         String path = resolveApplyPath(state);
                         if (path.length() > 0) BackendApplyQueue.get(context).enqueue(path, "runtime-commit-" + c.source.name().toLowerCase(), true);
+                        ok = true;
                     } catch (Throwable t) { if (log != null) log.log("runtime", "commit side effect failed #" + c.id + ": " + t); }
                     bus.dispatch(RuntimeCommand.opFinished(opId, ok));
                 });
@@ -52,7 +66,6 @@ public final class SideEffectRunner {
                     boolean ok = false;
                     try {
                         IceCamLog.marker(log, "START_STREAM", "source=" + c.source.name());
-                        binder.setPreferredService(RootBootstrap.FIXED_SERVICE_NAME);
                         String path = resolveApplyPath(state);
                         if (path.length() > 0) {
                             BackendApplyQueue.get(context).enqueue(path, "runtime-start-" + c.source.name().toLowerCase(), true);
@@ -72,7 +85,7 @@ public final class SideEffectRunner {
                         IceCamLog.marker(log, "RESTORE_CAMERA", "source=" + c.source.name());
                         root.restoreCamera();
                         binder.clearCache();
-                        context.getSharedPreferences("app_config", Context.MODE_PRIVATE).edit()
+                        prefs.edit()
                                 .putBoolean("ReplacementActive", false)
                                 .putString("IceCamState", "RESTORED")
                                 .apply();
@@ -101,24 +114,4 @@ public final class SideEffectRunner {
         }
         return path;
     }
-
-    private boolean sendTransformBestEffort(TransformState s) {
-        try {
-            binder.setPreferredService(RootBootstrap.FIXED_SERVICE_NAME);
-            if (!binder.connected()) {
-                if (log != null) log.log("runtime", "TX24 skipped: binder down " + binder.lastError());
-                return false;
-            }
-            boolean active = context.getSharedPreferences("app_config", Context.MODE_PRIVATE)
-                    .getBoolean("ReplacementActive", false);
-            if (!active) {
-                if (log != null) log.log("runtime", "TX24 skipped: stream inactive (UI-only transform)");
-                return false;
-            }
-            int r = binder.setTransform(s);
-            if (log != null) log.log("runtime", "TX24 transform result=" + r + " " + s.summary());
-            return r >= 0;
-        } catch (Throwable t) { if (log != null) log.log("runtime", "TX24 transform skipped: " + t); return false; }
-    }
-    private static void sleep(long ms) { try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); } }
 }

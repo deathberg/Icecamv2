@@ -95,6 +95,14 @@ public final class RootBootstrap {
                 log.log("daemon", "already up " + probe);
                 return true;
             }
+            if (probe.vcplaxRunning && probe.serviceRegistered && !probe.binderReachable) {
+                log.log("daemon", "binder stale while vcplax up " + probe + " — soft wait");
+                binderProbe.clearCache();
+                if (waitForDaemon(5000, binderProbe)) {
+                    log.log("daemon", "binder recovered " + probeDaemon(binderProbe));
+                    return true;
+                }
+            }
             log.log("daemon", "daemon down (" + probe + ") — full bootstrap");
             if (!rootHookLibsPresent()) {
                 log.log("daemon", "root hooks missing — will redeploy during bootstrap");

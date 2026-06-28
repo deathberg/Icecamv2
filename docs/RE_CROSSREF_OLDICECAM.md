@@ -52,3 +52,4 @@ tail -40 /data/camera/vcplax.log
 | 2.0.6 | serviceAlive `not found` bug |
 | 2.0.7 | restore + cameraserver clean, TX24 guard |
 | 2.0.8 | reference ShadowHook 1.0.x, TX16–19 apply, size gates |
+| 2.0.9 | TX24=color (INT/DIA), ROT→TX18, preview video thumbs, TX22 reset |

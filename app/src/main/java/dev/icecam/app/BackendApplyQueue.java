@@ -6,6 +6,7 @@ import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import dev.icecam.app.runtime.CommandBus;
+import dev.icecam.app.ColorCorrectionState;
 
 /**
  * Process-wide serialized backend apply queue.
@@ -151,6 +152,9 @@ public final class BackendApplyQueue {
                     return false;
                 }
                 sleepMs(400);
+                NativeControlRouter controls = new NativeControlRouter(context, log, binder);
+                controls.resetSeekRange();
+                sleepMs(120);
                 if (!MediaTransformer.isVideoPath(req.path) && !req.path.contains("/baked/")) {
                     IceCamLog.w(log, "applyq", "image path — expect baked JPEG, src=" + req.path);
                 }
@@ -165,6 +169,8 @@ public final class BackendApplyQueue {
                 long tx11Ms = android.os.SystemClock.elapsedRealtime() - tx11Start;
                 sleepMs(200);
                 int settings = binder.applyPlaybackSettings(current, prefs.getBoolean("PlayisLoop", true));
+                ColorCorrectionState color = ColorCorrectionState.load(prefs);
+                int tx24 = binder.setColorCorrection(color);
                 boolean modeOk = VliveBinderClient.isSetModeOk(mode);
                 boolean playOk = VliveBinderClient.isPlayOk(play);
                 boolean active = modeOk && playOk;
@@ -177,7 +183,7 @@ public final class BackendApplyQueue {
                         + " TX14mode=" + tx14Mode
                         + " TX14=" + mode + (modeOk ? "(ok)" : "(fail)") + "/" + tx14Ms + "ms"
                         + " TX11=" + play + (playOk ? "(ok)" : "(fail)") + "/" + tx11Ms + "ms"
-                        + " settings=" + settings
+                        + " settings=" + settings + " TX24=" + tx24
                         + " active=" + active + " total=" + (android.os.SystemClock.elapsedRealtime() - t0) + "ms");
                 if (!active) binder.clearCache();
                 return active;

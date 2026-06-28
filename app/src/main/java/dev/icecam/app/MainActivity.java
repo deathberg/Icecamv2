@@ -121,11 +121,17 @@ public class MainActivity extends Activity {
         body.addView(row1);
 
         LinearLayout row2 = row();
-        row2.addView(bigButton("ZOOM -", v -> mutate("zoom-"), UiKit.PANEL_3), weight());
-        row2.addView(bigButton("ZOOM +", v -> mutate("zoom+"), UiKit.PANEL_3), weight());
+        row2.addView(bigButton("INT −", v -> mutate("color-int-"), UiKit.PANEL_3), weight());
+        row2.addView(bigButton("INT +", v -> mutate("color-int+"), UiKit.PANEL_3), weight());
         row2.addView(bigButton("ROT -90", v -> mutate("rot-90"), UiKit.PANEL_3), weight());
         row2.addView(bigButton("ROT +90", v -> mutate("rot+90"), UiKit.PANEL_3), weight());
         body.addView(row2);
+
+        LinearLayout row2b = row();
+        row2b.addView(bigButton("DIA −", v -> mutate("color-dia-"), UiKit.PANEL_3), weight());
+        row2b.addView(bigButton("DIA +", v -> mutate("color-dia+"), UiKit.PANEL_3), weight());
+        row2b.addView(bigButton("COLOR RST", v -> mutate("color-reset"), UiKit.PANEL_3), weight());
+        body.addView(row2b);
 
         LinearLayout row3 = row();
         row3.addView(bigButton("↑", v -> mutate("up"), UiKit.PANEL_3), weight());
@@ -133,6 +139,10 @@ public class MainActivity extends Activity {
         row3.addView(bigButton("←", v -> mutate("left"), UiKit.PANEL_3), weight());
         row3.addView(bigButton("→", v -> mutate("right"), UiKit.PANEL_3), weight());
         body.addView(row3);
+        TextView controlHint = text("Pan = preview only · INT/DIA = TX24 color · ROT/MIRROR = TX18/19", 10, false, UiKit.MUTED);
+        controlHint.setGravity(Gravity.CENTER);
+        controlHint.setPadding(0, dp(2), 0, dp(4));
+        body.addView(controlHint);
 
         LinearLayout row4 = row();
         row4.addView(bigButton("MIRROR X", v -> mutate("mirror-x"), UiKit.PANEL_3), weight(1.15f));
@@ -208,6 +218,7 @@ public class MainActivity extends Activity {
             if (cached != null && !cached.isRecycled()) return cached;
             Bitmap bm = null;
             if (MediaTransformer.isImagePath(p)) bm = MediaTransformer.renderPreview(this, p, new TransformState(), w, h);
+            else if (MediaTransformer.isVideoPath(p)) bm = MediaPreviewHelper.loadPreviewFrame(p, w, h);
             if (bm != null) thumbCache.put(key, bm);
             return bm;
         } catch (Throwable ignored) { return null; }

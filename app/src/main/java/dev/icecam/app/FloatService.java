@@ -121,10 +121,16 @@ public class FloatService extends Service {
         box.addView(r0);
 
         LinearLayout r1 = row();
-        r1.addView(btn("Zoom +", v -> mutate("zoom+")), weight());
-        r1.addView(btn("Up", v -> mutate("up")), weight());
-        r1.addView(btn("Zoom -", v -> mutate("zoom-")), weight());
+        r1.addView(btn("INT+", v -> mutate("color-int+")), weight());
+        r1.addView(btn("ROT+90", v -> mutate("rot+90")), weight());
+        r1.addView(btn("INT-", v -> mutate("color-int-")), weight());
         box.addView(r1);
+
+        LinearLayout r1b = row();
+        r1b.addView(btn("DIA+", v -> mutate("color-dia+")), weight());
+        r1b.addView(btn("MIR X", v -> mutate("mirror-x")), weight());
+        r1b.addView(btn("DIA-", v -> mutate("color-dia-")), weight());
+        box.addView(r1b);
 
         LinearLayout r2 = row();
         r2.addView(btn("Left", v -> mutate("left")), weight());
@@ -133,16 +139,10 @@ public class FloatService extends Service {
         box.addView(r2);
 
         LinearLayout r3 = row();
-        r3.addView(btn("Fit/Fill", v -> mutate("fit-fill")), weight());
+        r3.addView(btn("Up", v -> mutate("up")), weight());
         r3.addView(btn("Down", v -> mutate("down")), weight());
-        r3.addView(btn("Crop", v -> mutate("crop")), weight());
+        r3.addView(btn("Commit", v -> commit()), weight());
         box.addView(r3);
-
-        LinearLayout r4 = row();
-        r4.addView(btn("ROT +90", v -> mutate("rot+90")), weight());
-        r4.addView(btn("MIR X", v -> mutate("mirror-x")), weight());
-        r4.addView(btn("Commit", v -> commit()), weight());
-        box.addView(r4);
 
         TextView faceLabel = tv("Face actions (TX22)", 9, true);
         faceLabel.setGravity(Gravity.CENTER);

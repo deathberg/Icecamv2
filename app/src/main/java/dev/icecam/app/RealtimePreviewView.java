@@ -24,6 +24,7 @@ public final class RealtimePreviewView extends ImageView {
         mediaPath = path;
         if (source != null) { source.recycle(); source = null; }
         if (MediaTransformer.isImagePath(path)) source = decodeBounded(path, 1800);
+        else if (MediaTransformer.isVideoPath(path)) source = MediaPreviewHelper.loadPreviewFrame(path, 1800, 1800);
         setImageBitmap(source);
         applyMatrix();
     }

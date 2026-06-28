@@ -197,12 +197,12 @@ public final class VliveBinderClient {
         return transactInt(TX_GET_INT, p, "");
     }
 
-    public int setRange(long start, long end) {
+    public int setRange(long startMs, long endMs) {
         Parcel p = Parcel.obtain();
         p.writeInterfaceToken(DESCRIPTOR);
-        p.writeLong(start);
-        p.writeLong(end);
-        return transactInt(TX_RANGE, p, "start=" + start + " end=" + end);
+        p.writeLong(startMs);
+        p.writeLong(endMs);
+        return transactInt(TX_RANGE, p, "seekMs=" + startMs + ".." + endMs);
     }
 
     public int setTransform(int mode, float panX, float panY, float zoomX, float zoomY, int flags) {
@@ -215,10 +215,28 @@ public final class VliveBinderClient {
         p.writeFloat(zoomY);
         p.writeInt(flags);
         return transactInt(TX_TRANSFORM, p, String.format(Locale.US,
-                "mode=%d pan=(%.2f,%.2f) zoom=(%.2f,%.2f) flags=0x%08X", mode, panX, panY, zoomX, zoomY, flags));
+                "LEGACY_GEOM mode=%d pan=(%.2f,%.2f) zoom=(%.2f,%.2f) flags=0x%08X", mode, panX, panY, zoomX, zoomY, flags));
     }
 
-    public int setTransform(TransformState s) { return setTransform(s.mode, s.panX, s.panY, s.zoomX, s.zoomY, s.flags); }
+    /** Native TX24 «三色» — mode, x, y, intensity, diameter, colorArgb (NOT zoom/pan). */
+    public int setColorCorrection(ColorCorrectionState c) {
+        if (c == null) return -999;
+        Parcel p = Parcel.obtain();
+        p.writeInterfaceToken(DESCRIPTOR);
+        p.writeInt(c.mode);
+        p.writeFloat(c.x);
+        p.writeFloat(c.y);
+        p.writeFloat(c.intensity);
+        p.writeFloat(c.diameter);
+        p.writeInt(c.colorArgb);
+        return transactInt(TX_TRANSFORM, p, String.format(Locale.US,
+                "color mode=%d xy=(%.2f,%.2f) int=%.2f dia=%.2f argb=0x%08X",
+                c.mode, c.x, c.y, c.intensity, c.diameter, c.colorArgb));
+    }
+
+    public int setTransform(TransformState s) {
+        return setTransform(s.mode, s.panX, s.panY, s.zoomX, s.zoomY, s.flags);
+    }
 
     /** Apply native playback display settings per RE (TX16–TX19). */
     public int applyPlaybackSettings(TransformState s, boolean loop) {
