@@ -65,6 +65,8 @@ public final class DiagnosticDumper {
                     "echo ---process---; ps -A | grep -iE 'vcplax|cameraserver' 2>/dev/null; " +
                     "echo ---lib-sizes---; wc -c /data/libvc.so /data/libvc++.so /data/camera/libvc.so /data/camera/vcplax 2>&1; " +
                     "echo ---hook-check---; test -f /data/libvc.so && test -f /data/libvc++.so && echo HOOK_ROOT_OK || echo HOOK_ROOT_MISSING; " +
+                    "echo ---cameraserver-maps---; CSPID=$(pidof cameraserver 2>/dev/null | awk '{print $1}'); " +
+                    "if [ -n \"$CSPID\" ]; then grep -iE 'libvc|shadowhook' /proc/$CSPID/maps 2>/dev/null || echo LIBVC_NOT_MAPPED; else echo NO_CAMERASERVER; fi; " +
                     "echo ---data-camera---; ls -l /data/camera 2>&1; " +
                     "echo ---vcplax.log---; tail -80 /data/camera/vcplax.log 2>&1; " +
                     "echo ---vcplax.err---; tail -80 /data/camera/vcplax.err 2>&1; " +

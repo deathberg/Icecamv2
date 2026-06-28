@@ -163,6 +163,8 @@ public final class BackendApplyQueue {
                 long tx11Start = android.os.SystemClock.elapsedRealtime();
                 int play = binder.playSource(req.path, current.mirrorH(), prefs.getBoolean("PlayisLoop", true));
                 long tx11Ms = android.os.SystemClock.elapsedRealtime() - tx11Start;
+                sleepMs(200);
+                int settings = binder.applyPlaybackSettings(current, prefs.getBoolean("PlayisLoop", true));
                 boolean modeOk = VliveBinderClient.isSetModeOk(mode);
                 boolean playOk = VliveBinderClient.isPlayOk(play);
                 boolean active = modeOk && playOk;
@@ -175,6 +177,7 @@ public final class BackendApplyQueue {
                         + " TX14mode=" + tx14Mode
                         + " TX14=" + mode + (modeOk ? "(ok)" : "(fail)") + "/" + tx14Ms + "ms"
                         + " TX11=" + play + (playOk ? "(ok)" : "(fail)") + "/" + tx11Ms + "ms"
+                        + " settings=" + settings
                         + " active=" + active + " total=" + (android.os.SystemClock.elapsedRealtime() - t0) + "ms");
                 if (!active) binder.clearCache();
                 return active;

@@ -219,6 +219,19 @@ public final class VliveBinderClient {
     }
 
     public int setTransform(TransformState s) { return setTransform(s.mode, s.panX, s.panY, s.zoomX, s.zoomY, s.flags); }
+
+    /** Apply native playback display settings per RE (TX16–TX19). */
+    public int applyPlaybackSettings(TransformState s, boolean loop) {
+        int tx16 = sendBoolCode(TX_ZERO_16, s.autoRotate());
+        int tx17 = sendBoolCode(TX_ZERO_17, loop);
+        int tx18 = sendIntCode(TX_INT_18, s.rotationQuadrant() * 90);
+        int tx19 = sendBoolCode(TX_ZERO_19, s.mirrorH());
+        IceCamLog.i(log, "tx", String.format(java.util.Locale.US,
+                "playback settings TX16=%d TX17=%d TX18=%d TX19=%d loop=%s rot=%d mir=%s",
+                tx16, tx17, tx18, tx19, loop, s.rotationQuadrant() * 90, s.mirrorH()));
+        return (tx16 >= 0 && tx17 >= 0 && tx18 >= 0 && tx19 >= 0) ? 0 : -1;
+    }
+
     public int sendBoolCode(int code, boolean v) { Parcel p = Parcel.obtain(); p.writeInterfaceToken(DESCRIPTOR); p.writeInt(v ? 1 : 0); return transactInt(code, p, "bool=" + v); }
     public int sendIntCode(int code, int v) { Parcel p = Parcel.obtain(); p.writeInterfaceToken(DESCRIPTOR); p.writeInt(v); return transactInt(code, p, "int=" + v); }
     public int simple(int code) { Parcel p = Parcel.obtain(); p.writeInterfaceToken(DESCRIPTOR); return transactInt(code, p, ""); }

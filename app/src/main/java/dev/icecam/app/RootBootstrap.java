@@ -273,6 +273,10 @@ public final class RootBootstrap {
         sb.append("deploy \"$SRC/vcplax.so\" /data/vcplax 700 || echo DEPLOY_FAIL vcplax_root\n");
         sb.append("echo ---hook-verify---\n");
         sb.append("wc -c /data/libvc.so /data/libvc++.so /data/camera/libvc.so /data/camera/libshadowhook.so /data/vcplax /data/camera/vcplax 2>&1\n");
+        sb.append("echo ---deploy-size-gate---\n");
+        sb.append("test $(wc -c < /data/libvc.so) -gt 1000000 && echo LIBVC_SIZE_OK || echo LIBVC_SIZE_FAIL\n");
+        sb.append("test $(wc -c < /data/libvc++.so) -gt 50000 && test $(wc -c < /data/libvc++.so) -lt 120000 && echo SHADOWHOOK_SIZE_OK || echo SHADOWHOOK_SIZE_FAIL\n");
+        sb.append("test $(wc -c < /data/vcplax) -gt 10000000 && echo VCPLAX_SIZE_OK || echo VCPLAX_SIZE_FAIL\n");
         if (restartCameraServer) {
             sb.append("echo ---restart-cameraserver---\n");
             sb.append("killall cameraserver 2>/dev/null || true\n");
@@ -307,6 +311,9 @@ public final class RootBootstrap {
             sb.append("service list 2>/dev/null | grep -iE \"$SERVER|vcplax\" || true\n");
             sb.append("echo ---vcplax-alive-after-launch---\n");
             sb.append("pidof vcplax 2>/dev/null || pidof /data/vcplax 2>/dev/null || echo vcplax_gone\n");
+            sb.append("echo ---cameraserver-hook-maps---\n");
+            sb.append("CSPID=$(pidof cameraserver 2>/dev/null | awk '{print $1}')\n");
+            sb.append("if [ -n \"$CSPID\" ]; then grep -iE 'libvc|shadowhook' /proc/$CSPID/maps 2>/dev/null || echo LIBVC_NOT_MAPPED_IN_CAMERASERVER; else echo CAMERASERVER_MISSING; fi\n");
         }
         sb.append("echo ---files---\n");
         sb.append("ls -l /data/camera 2>&1; ls -l /data/vcplax /data/libvc.so /data/libvc++.so 2>&1 || true\n");
