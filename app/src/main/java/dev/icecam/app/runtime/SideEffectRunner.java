@@ -53,8 +53,6 @@ public final class SideEffectRunner {
                     try {
                         IceCamLog.marker(log, "START_STREAM", "source=" + c.source.name());
                         binder.setPreferredService(RootBootstrap.FIXED_SERVICE_NAME);
-                        if (!binder.connected()) { root.bootstrap(); binder.clearCache(); sleep(350); }
-                        else if (!root.hookLibsPresent()) { root.redeployHookLibs(); sleep(800); }
                         String path = resolveApplyPath(state);
                         if (path.length() > 0) {
                             BackendApplyQueue.get(context).enqueue(path, "runtime-start-" + c.source.name().toLowerCase(), true);

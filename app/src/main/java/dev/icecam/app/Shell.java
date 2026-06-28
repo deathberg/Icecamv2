@@ -26,7 +26,7 @@ public final class Shell {
             Thread t1 = pump(p.getInputStream(), out);
             Thread t2 = pump(p.getErrorStream(), err);
             int code = p.waitFor();
-            t1.join(1500); t2.join(1500);
+            t1.join(8000); t2.join(8000);
             return new Result(code, out.toString("UTF-8"), err.toString("UTF-8"));
         } catch (Throwable t) { return new Result(-1, "", String.valueOf(t)); }
         finally { if (p != null) p.destroy(); }
