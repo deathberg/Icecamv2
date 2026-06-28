@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">IceCam-Log-Spy</string>
+    <string name="btn_dump">Dump</string>
+    <string name="btn_share">Share</string>
+    <string name="btn_clear">Clear UI</string>
+    <string name="notification_title">IceCam Log Spy</string>
+    <string name="notification_text">Capturing IceCam / libvc / float / TX logs</string>
+</resources>
