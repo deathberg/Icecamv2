@@ -30,45 +30,85 @@ public final class RootBootstrap {
         NativeExtractor.Result ex = NativeExtractor.extract(ctx, log);
         String server = serverName();
         String src = ex.dir.getAbsolutePath();
-        String script = "set -x\n" +
-                "SRC=" + Shell.q(src) + "\n" +
-                "SERVER=" + Shell.q(server) + "\n" +
-                "echo selected_abi=" + Shell.q(ex.abi) + " server=$SERVER src=$SRC\n" +
-                "id\n" +
-                "getenforce 2>/dev/null || true\n" +
-                "setenforce 0 2>/dev/null || true\n" +
-                "killall vcplax 2>/dev/null || true\n" +
-                "rm -rf /data/camera /data/samera\n" +
-                "mkdir -p /data/camera /data/local/tmp/icecam\n" +
-                "chattr -i /data/camera 2>/dev/null || true\n" +
-                "cp -f $SRC/libvc.so /data/libvc.so\n" +
-                "cp -f $SRC/libshadowhook.so /data/libvc++.so\n" +
-                "cp -f $SRC/libshadowhook.so /data/camera/libshadowhook.so\n" +
-                "cp -f $SRC/libvc.so /data/camera/libvc.so\n" +
-                "cp -f $SRC/vcplax.so /data/camera/vcplax\n" +
-                "cp -f $SRC/vcplax.so /data/vcplax 2>/dev/null || true\n" +
-                "chmod 700 /data/camera/vcplax /data/vcplax 2>/dev/null || true\n" +
-                "chmod 644 /data/libvc.so /data/libvc++.so /data/camera/libvc.so /data/camera/libshadowhook.so 2>/dev/null || true\n" +
-                "rm -f /data/camera/vcplax.log /data/camera/vcplax.err\n" +
-                "export LD_LIBRARY_PATH=/data/camera:/data:/system/lib64:/system_ext/lib64:/vendor/lib64:/system/lib:/system_ext/lib:/vendor/lib:$LD_LIBRARY_PATH\n" +
-                "export ICECAM_SERVER=$SERVER\n" +
-                "EXEC=/data/vcplax\n" +
-                "[ -x /data/vcplax ] || EXEC=/data/camera/vcplax\n" +
-                "echo ---launch $EXEC $SERVER---\n" +
-                "nohup $EXEC $SERVER >/data/camera/vcplax.log 2>/data/camera/vcplax.err &\n" +
-                "echo spawned_pid=$! exec=$EXEC\n" +
-                "for i in 1 2 3 4 5; do sleep 1; service check $SERVER 2>&1 | grep -qi found && break; done\n" +
-                "echo ---process---\nps -A | grep -i vcplax || ps | grep -i vcplax || true\n" +
-                "echo ---expected-service---\nservice check $SERVER 2>&1 || true\n" +
-                "echo ---service-list-filtered---\nservice list 2>/dev/null | grep -iE \"^$SERVER$|vcplax\" || true\n" +
-                "echo ---files---\nls -l /data/camera 2>&1; ls -l /data/vcplax /data/libvc.so /data/libvc++.so 2>&1 || true\n" +
-                "echo ---vcplax.log---\ncat /data/camera/vcplax.log 2>/dev/null || true\n" +
-                "echo ---vcplax.err---\ncat /data/camera/vcplax.err 2>/dev/null || true\n" +
-                "echo ---selinux-after---\ngetenforce 2>/dev/null || true\n";
+        String script = deployScript(src, server, ex.abi, true);
         Shell.Result r = Shell.su(script);
         String all = r.all();
         log.logBlock("root", all);
         return all;
+    }
+
+    /** Redeploy hook libs + restart cameraserver without restarting vcplax. */
+    public String redeployHookLibs() {
+        NativeExtractor.Result ex = NativeExtractor.extract(ctx, log);
+        String script = deployScript(ex.dir.getAbsolutePath(), serverName(), ex.abi, false);
+        Shell.Result r = Shell.su(script);
+        String all = r.all();
+        log.logBlock("hook", all);
+        return all;
+    }
+
+    public boolean hookLibsPresent() {
+        Shell.Result r = Shell.su(
+                "test -f /data/libvc.so && test -f /data/libvc++.so && " +
+                "test -f /data/camera/libvc.so && test -f /data/camera/libshadowhook.so && echo HOOK_OK || echo HOOK_MISSING");
+        return r.out.contains("HOOK_OK");
+    }
+
+    private static String deployScript(String src, String server, String abi, boolean launchDaemon) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("set -x\n");
+        sb.append("SRC=").append(Shell.q(src)).append('\n');
+        sb.append("SERVER=").append(Shell.q(server)).append('\n');
+        sb.append("echo selected_abi=").append(Shell.q(abi)).append(" server=$SERVER src=$SRC\n");
+        sb.append("id\n");
+        sb.append("getenforce 2>/dev/null || true\n");
+        sb.append("setenforce 0 2>/dev/null || true\n");
+        if (launchDaemon) {
+            sb.append("killall vcplax 2>/dev/null || true\n");
+            sb.append("rm -rf /data/camera /data/samera\n");
+        }
+        sb.append("mkdir -p /data/camera /data/local/tmp/icecam\n");
+        sb.append("chattr -i /data/camera 2>/dev/null || true\n");
+        sb.append("chattr -i /data/libvc.so /data/libvc++.so 2>/dev/null || true\n");
+        sb.append("deploy() {\n");
+        sb.append("  local s=\"$1\" d=\"$2\" m=\"$3\"\n");
+        sb.append("  chattr -i \"$d\" 2>/dev/null || true\n");
+        sb.append("  rm -f \"$d\"\n");
+        sb.append("  cat \"$s\" > \"$d\" 2>/dev/null || cp -f \"$s\" \"$d\" || return 1\n");
+        sb.append("  chmod \"$m\" \"$d\" 2>/dev/null || true\n");
+        sb.append("  test -f \"$d\" && test \"$(wc -c < \"$d\")\" -gt 1000\n");
+        sb.append("}\n");
+        sb.append("deploy \"$SRC/libvc.so\" /data/libvc.so 644 || echo DEPLOY_FAIL libvc_root\n");
+        sb.append("deploy \"$SRC/libshadowhook.so\" /data/libvc++.so 644 || echo DEPLOY_FAIL shadowhook_root\n");
+        sb.append("deploy \"$SRC/libshadowhook.so\" /data/camera/libshadowhook.so 644 || echo DEPLOY_FAIL shadowhook_camera\n");
+        sb.append("deploy \"$SRC/libvc.so\" /data/camera/libvc.so 644 || echo DEPLOY_FAIL libvc_camera\n");
+        sb.append("deploy \"$SRC/vcplax.so\" /data/camera/vcplax 700 || echo DEPLOY_FAIL vcplax_camera\n");
+        sb.append("deploy \"$SRC/vcplax.so\" /data/vcplax 700 2>/dev/null || true\n");
+        sb.append("echo ---hook-verify---\n");
+        sb.append("wc -c /data/libvc.so /data/libvc++.so /data/camera/libvc.so /data/camera/libshadowhook.so /data/camera/vcplax 2>&1\n");
+        sb.append("echo ---restart-cameraserver---\n");
+        sb.append("killall cameraserver 2>/dev/null || true\n");
+        sb.append("sleep 2\n");
+        sb.append("ps -A | grep -i cameraserver || ps | grep -i cameraserver || true\n");
+        if (launchDaemon) {
+            sb.append("rm -f /data/camera/vcplax.log /data/camera/vcplax.err\n");
+            sb.append("export LD_LIBRARY_PATH=/data/camera:/data:/system/lib64:/system_ext/lib64:/vendor/lib64:/system/lib:/system_ext/lib:/vendor/lib:$LD_LIBRARY_PATH\n");
+            sb.append("export ICECAM_SERVER=$SERVER\n");
+            sb.append("EXEC=/data/camera/vcplax\n");
+            sb.append("[ -x \"$EXEC\" ] || EXEC=/data/vcplax\n");
+            sb.append("echo ---launch $EXEC $SERVER---\n");
+            sb.append("nohup $EXEC $SERVER >/data/camera/vcplax.log 2>/data/camera/vcplax.err &\n");
+            sb.append("echo spawned_pid=$! exec=$EXEC\n");
+            sb.append("for i in 1 2 3 4 5; do sleep 1; service check $SERVER 2>&1 | grep -qi found && break; done\n");
+            sb.append("echo ---process---\nps -A | grep -i vcplax || ps | grep -i vcplax || true\n");
+            sb.append("echo ---expected-service---\nservice check $SERVER 2>&1 || true\n");
+            sb.append("echo ---service-list-filtered---\nservice list 2>/dev/null | grep -iE \"^$SERVER$|vcplax\" || true\n");
+        }
+        sb.append("echo ---files---\nls -l /data/camera 2>&1; ls -l /data/vcplax /data/libvc.so /data/libvc++.so 2>&1 || true\n");
+        sb.append("echo ---vcplax.log---\ncat /data/camera/vcplax.log 2>/dev/null || true\n");
+        sb.append("echo ---vcplax.err---\ncat /data/camera/vcplax.err 2>/dev/null || true\n");
+        sb.append("echo ---selinux-after---\ngetenforce 2>/dev/null || true\n");
+        return sb.toString();
     }
 
     public String restoreCamera() {

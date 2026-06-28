@@ -37,7 +37,7 @@ public final class DiagnosticDumper {
         sb.append("ActiveSlot=").append(prefs.getInt("ActiveSlot", 1)).append('\n');
 
         sb.append("\n--- prefs (core) ---\n");
-        String[] keys = {"ServerName", "TransformMode", "PlayisLoop", "PlayMirror", "PlayAngle", "EnableTx24Color", "LastTransformReason"};
+        String[] keys = {"ServerName", "PlayFileType", "TransformMode", "PlayisLoop", "PlayMirror", "PlayAngle", "EnableTx24Color", "LastTransformReason"};
         for (String k : keys) {
             if (prefs.contains(k)) sb.append(k).append('=').append(prefs.getAll().get(k)).append('\n');
         }
@@ -57,6 +57,7 @@ public final class DiagnosticDumper {
                     "echo ---service-check---; service check privsam_service 2>&1; " +
                     "echo ---process---; ps -A | grep -iE 'vcplax|cameraserver' 2>/dev/null; " +
                     "echo ---lib-sizes---; wc -c /data/libvc.so /data/libvc++.so /data/camera/libvc.so /data/camera/vcplax 2>&1; " +
+                    "echo ---hook-check---; test -f /data/libvc.so && test -f /data/libvc++.so && echo HOOK_ROOT_OK || echo HOOK_ROOT_MISSING; " +
                     "echo ---data-camera---; ls -l /data/camera 2>&1; " +
                     "echo ---vcplax.log---; tail -80 /data/camera/vcplax.log 2>&1; " +
                     "echo ---vcplax.err---; tail -80 /data/camera/vcplax.err 2>&1; " +

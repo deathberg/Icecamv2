@@ -134,13 +134,17 @@ public final class BackendApplyQueue {
                     binder.clearCache();
                     sleepMs(250);
                 }
-                if (!MediaTransformer.isVideoPath(req.path)) {
-                    IceCamLog.w(log, "applyq", "image path — baking JPEG before TX14/TX11, src=" + req.path);
+                if (!root.hookLibsPresent()) {
+                    IceCamLog.w(log, "applyq", "hook libs missing — redeploy + cameraserver restart");
+                    root.redeployHookLibs();
+                    sleepMs(1200);
                 }
-                int playMode = prefs.getInt("PlayFileType", 0);
-                if (playMode <= 0) playMode = MediaTransformer.isVideoPath(req.path) ? 2 : 1;
+                if (!MediaTransformer.isVideoPath(req.path) && !req.path.contains("/baked/")) {
+                    IceCamLog.w(log, "applyq", "image path — expect baked JPEG, src=" + req.path);
+                }
+                int tx14Mode = MediaPaths.tx14Mode(req.path);
                 long tx14Start = android.os.SystemClock.elapsedRealtime();
-                int mode = binder.setModeString(playMode, req.path);
+                int mode = binder.setModeString(tx14Mode, req.path);
                 long tx14Ms = android.os.SystemClock.elapsedRealtime() - tx14Start;
                 sleepMs(520);
                 TransformState current = TransformState.load(prefs);
@@ -156,6 +160,7 @@ public final class BackendApplyQueue {
                         .apply();
                 CommandBus.get(context).reloadFromPrefs();
                 IceCamLog.i(log, "applyq", "apply #" + req.sequence
+                        + " TX14mode=" + tx14Mode
                         + " TX14=" + mode + (modeOk ? "(ok)" : "(fail)") + "/" + tx14Ms + "ms"
                         + " TX11=" + play + (playOk ? "(ok)" : "(fail)") + "/" + tx11Ms + "ms"
                         + " active=" + active + " total=" + (android.os.SystemClock.elapsedRealtime() - t0) + "ms");

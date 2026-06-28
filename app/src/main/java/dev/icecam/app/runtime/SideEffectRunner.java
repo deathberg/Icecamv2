@@ -5,6 +5,7 @@ import dev.icecam.app.AppLogger;
 import dev.icecam.app.BackendApplyQueue;
 import dev.icecam.app.IceCamLog;
 import dev.icecam.app.RootBootstrap;
+import dev.icecam.app.MediaPaths;
 import dev.icecam.app.MediaTransformer;
 import dev.icecam.app.TransformState;
 import dev.icecam.app.VliveBinderClient;
@@ -53,7 +54,7 @@ public final class SideEffectRunner {
                         IceCamLog.marker(log, "START_STREAM", "source=" + c.source.name());
                         binder.setPreferredService(RootBootstrap.FIXED_SERVICE_NAME);
                         if (!binder.connected()) { root.bootstrap(); binder.clearCache(); sleep(350); }
-                        ok = sendTransformBestEffort(state.transform);
+                        else if (!root.hookLibsPresent()) { root.redeployHookLibs(); sleep(800); }
                         String path = resolveApplyPath(state);
                         if (path.length() > 0) {
                             BackendApplyQueue.get(context).enqueue(path, "runtime-start-" + c.source.name().toLowerCase(), true);
@@ -95,7 +96,7 @@ public final class SideEffectRunner {
             if (baked != null && baked.length() > 0) {
                 context.getSharedPreferences("app_config", Context.MODE_PRIVATE).edit()
                         .putString("PlayFileMp4", baked)
-                        .putInt("PlayFileType", 1)
+                        .putInt("PlayFileType", MediaPaths.TYPE_LOCAL_FILE)
                         .apply();
                 return baked;
             }
