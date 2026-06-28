@@ -49,10 +49,12 @@ EXPORT prepends:
 /sdcard/icecam_debug.log
 ```
 
-Pull from device:
+Pull from device (path shown in app status bar):
 
 ```bash
 adb pull /sdcard/icecam_debug.log .
+# or if scoped storage blocked public path:
+adb pull /sdcard/Android/data/com.icecam.logspy/files/icecam_debug.log .
 ```
 
 ## Architecture

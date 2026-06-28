@@ -6,6 +6,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
@@ -39,13 +40,12 @@ public class LogCaptureService extends Service
     public static final String ACTION_STATE = "com.icecam.logspy.STATE";
     public static final String EXTRA_RECORDING = "recording";
     public static final String EXTRA_READER_ALIVE = "reader_alive";
+    public static final String EXTRA_STATUS_MSG = "status_msg";
+    public static final String EXTRA_LOG_PATH = "log_path";
 
     private static final String TAG = "IceCamLogSpy";
     private static final String CHANNEL_ID = "log_capture";
     private static final int NOTIFICATION_ID = 1;
-
-    public static final String LOG_FILE_PATH = "/sdcard/icecam_debug.log";
-    public static final String EXPORT_FILE_PATH = "/sdcard/icecam_export.log";
 
     private final AtomicBoolean capturing = new AtomicBoolean(false);
     private final AtomicBoolean readerAlive = new AtomicBoolean(false);
@@ -53,11 +53,14 @@ public class LogCaptureService extends Service
     private Thread readerThread;
     private BufferedWriter fileWriter;
     private PowerManager.WakeLock wakeLock;
+    private String statusMsg = "Idle";
+    private File logFile;
 
     @Override
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
+        logFile = LogPaths.getLogFile(this);
     }
 
     @Override
@@ -107,22 +110,49 @@ public class LogCaptureService extends Service
     @Override
     public void onReaderStarted() {
         readerAlive.set(true);
+        statusMsg = "Recording";
         broadcastState();
     }
 
     @Override
     public void onReaderStopped() {
         readerAlive.set(false);
+        if (capturing.get()) {
+            statusMsg = "Logcat stalled — grant READ_LOGS via adb";
+        }
+        broadcastState();
+    }
+
+    @Override
+    public void onReaderError(String message) {
+        readerAlive.set(false);
+        statusMsg = message;
+        Log.e(TAG, message);
         broadcastState();
     }
 
     private void handleStart() {
-        startForeground(NOTIFICATION_ID, buildNotification(true));
-        acquireWakeLock();
-        if (!openLogFile()) {
+        // Must enter foreground immediately (Android 8+ timeout, Android 14+ type).
+        try {
+            enterForeground(true);
+        } catch (Exception e) {
+            statusMsg = "FGS error: " + e.getMessage();
+            Log.e(TAG, statusMsg, e);
             broadcastState();
             return;
         }
+
+        acquireWakeLock();
+        logFile = LogPaths.getLogFile(this);
+
+        if (!openLogFile()) {
+            statusMsg = "File write failed — logs on screen only";
+            Log.w(TAG, statusMsg);
+        } else {
+            statusMsg = "Recording → " + logFile.getAbsolutePath();
+        }
+
+        // Always start logcat even if file open failed (UI capture still works).
         startCaptureInternal();
         broadcastState();
     }
@@ -132,38 +162,48 @@ public class LogCaptureService extends Service
         releaseWakeLock();
         writeSessionEvent("stop");
         closeLogFile();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_DETACH);
-        } else {
-            stopForeground(false);
-        }
+        exitForeground();
+        statusMsg = "Stopped";
         broadcastState();
     }
 
     private void handleClear() {
         closeLogFile();
-        File file = new File(LOG_FILE_PATH);
-        if (file.exists()) {
+        LogPaths.reset();
+        logFile = LogPaths.getLogFile(this);
+        if (logFile.exists()) {
             //noinspection ResultOfMethodCallIgnored
-            file.delete();
+            logFile.delete();
         }
         clearScreenBroadcast();
         if (capturing.get()) {
             openLogFile();
             writeSessionEvent("clear");
         }
+        statusMsg = capturing.get() ? "Recording (cleared)" : "Cleared";
         broadcastState();
     }
 
     private void startCaptureInternal() {
-        if (capturing.getAndSet(true)) {
+        if (capturing.get()) {
+            // Already running — restart reader if it died.
+            if (readerThread == null || !readerThread.isAlive()) {
+                readerAlive.set(false);
+                reader = new MainActivity.LogcatReader(this, this);
+                readerThread = new Thread(reader, "logcat-reader");
+                readerThread.setDaemon(true);
+                readerThread.start();
+            }
             return;
         }
+        capturing.set(true);
         writeSessionEvent("start");
         reader = new MainActivity.LogcatReader(this, this);
         readerThread = new Thread(reader, "logcat-reader");
         readerThread.setDaemon(true);
         readerThread.start();
+        // Self-test line — tag contains "IceCam", confirms pipeline end-to-end.
+        Log.i("IceCamLogSpy", "Capture started → " + logFile.getAbsolutePath());
     }
 
     private void stopCaptureInternal() {
@@ -174,22 +214,27 @@ public class LogCaptureService extends Service
         }
         if (readerThread != null) {
             readerThread.interrupt();
+            try {
+                readerThread.join(1500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
             readerThread = null;
         }
         reader = null;
     }
 
     private boolean openLogFile() {
+        closeLogFile();
         try {
-            File file = new File(LOG_FILE_PATH);
-            File parent = file.getParentFile();
+            File parent = logFile.getParentFile();
             if (parent != null && !parent.exists()) {
                 parent.mkdirs();
             }
-            fileWriter = new BufferedWriter(new FileWriter(file, true), 8192);
+            fileWriter = new BufferedWriter(new FileWriter(logFile, true), 8192);
             return true;
         } catch (IOException e) {
-            Log.e(TAG, "Cannot open " + LOG_FILE_PATH + ": " + e.getMessage());
+            Log.e(TAG, "Cannot open " + logFile + ": " + e.getMessage());
             fileWriter = null;
             return false;
         }
@@ -220,6 +265,7 @@ public class LogCaptureService extends Service
             fileWriter.flush();
         } catch (IOException e) {
             Log.e(TAG, "File write failed: " + e.getMessage());
+            statusMsg = "File write error";
         }
     }
 
@@ -241,7 +287,33 @@ public class LogCaptureService extends Service
         intent.setPackage(getPackageName());
         intent.putExtra(EXTRA_RECORDING, capturing.get());
         intent.putExtra(EXTRA_READER_ALIVE, readerAlive.get());
+        intent.putExtra(EXTRA_STATUS_MSG, statusMsg);
+        if (logFile != null) {
+            intent.putExtra(EXTRA_LOG_PATH, logFile.getAbsolutePath());
+        }
         sendBroadcast(intent);
+    }
+
+    private void enterForeground(boolean recording) {
+        Notification notification = buildNotification(recording);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification);
+        } else {
+            startForeground(NOTIFICATION_ID, notification);
+        }
+    }
+
+    private void exitForeground() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_DETACH);
+        } else {
+            stopForeground(false);
+        }
     }
 
     private void createNotificationChannel() {

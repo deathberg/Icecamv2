@@ -1,16 +1,19 @@
 package com.icecam.logspy;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ScrollView;
@@ -57,6 +60,8 @@ public class MainActivity extends Activity {
     private boolean flushScheduled = false;
     private boolean recording = false;
     private boolean readerAlive = false;
+    private String statusMsg = "Tap START";
+    private String logPath = "";
 
     private final BroadcastReceiver logReceiver = new BroadcastReceiver() {
         @Override
@@ -79,6 +84,14 @@ public class MainActivity extends Activity {
             if (LogCaptureService.ACTION_STATE.equals(intent.getAction())) {
                 recording = intent.getBooleanExtra(LogCaptureService.EXTRA_RECORDING, false);
                 readerAlive = intent.getBooleanExtra(LogCaptureService.EXTRA_READER_ALIVE, false);
+                statusMsg = intent.getStringExtra(LogCaptureService.EXTRA_STATUS_MSG);
+                logPath = intent.getStringExtra(LogCaptureService.EXTRA_LOG_PATH);
+                if (statusMsg == null) {
+                    statusMsg = recording ? "Recording" : "Stopped";
+                }
+                if (logPath == null) {
+                    logPath = LogPaths.getLogFile(context).getAbsolutePath();
+                }
                 updateIndicator();
                 updateButtonStates();
                 updateStatus();
@@ -110,6 +123,16 @@ public class MainActivity extends Activity {
         updateStatus();
         updateIndicator();
         updateButtonStates();
+        requestNotificationPermission();
+    }
+
+    private void requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
+            }
+        }
     }
 
     @Override
@@ -167,12 +190,23 @@ public class MainActivity extends Activity {
         Intent intent = new Intent(this, LogCaptureService.class);
         intent.setAction(LogCaptureService.ACTION_CMD);
         intent.putExtra(LogCaptureService.EXTRA_COMMAND, cmd);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent);
-        } else {
-            startService(intent);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent);
+            } else {
+                startService(intent);
+            }
+        } catch (Exception e) {
+            toast("Service start failed: " + e.getMessage());
+            return;
         }
-        if (LogCaptureService.CMD_CLEAR.equals(cmd)) {
+        if (LogCaptureService.CMD_START.equals(cmd)) {
+            if (!hasReadLogsPermission()) {
+                toast("READ_LOGS not granted — run: adb shell pm grant com.icecam.logspy android.permission.READ_LOGS");
+            } else {
+                toast("Starting logger…");
+            }
+        } else if (LogCaptureService.CMD_CLEAR.equals(cmd)) {
             clearScreen();
             updateStatus();
         }
@@ -236,14 +270,21 @@ public class MainActivity extends Activity {
     }
 
     private void updateStatus() {
-        File f = new File(LogCaptureService.LOG_FILE_PATH);
+        String path = !TextUtils.isEmpty(logPath)
+                ? logPath
+                : LogPaths.getLogFile(this).getAbsolutePath();
+        File f = new File(path);
         long kb = f.exists() ? f.length() / 1024 : 0;
         String state = recording ? (readerAlive ? "REC" : "STALLED") : "STOPPED";
-        tvStatus.setText("[" + state + "] " + LogCaptureService.LOG_FILE_PATH + " (" + kb + " KB)");
+        tvStatus.setText("[" + state + "] " + statusMsg + "\n" + path + " (" + kb + " KB)");
+    }
+
+    private File getLogFile() {
+        return LogPaths.getLogFile(this);
     }
 
     private String readLogFileContents() {
-        File file = new File(LogCaptureService.LOG_FILE_PATH);
+        File file = getLogFile();
         if (!file.exists()) {
             return "";
         }
@@ -272,7 +313,7 @@ public class MainActivity extends Activity {
         String exportContent = textHeader + jsonHeader + "\n" + logBody;
 
         try {
-            File exportFile = new File(LogCaptureService.EXPORT_FILE_PATH);
+            File exportFile = LogPaths.getExportFile(this);
             File parent = exportFile.getParentFile();
             if (parent != null && !parent.exists()) {
                 parent.mkdirs();
@@ -291,7 +332,12 @@ public class MainActivity extends Activity {
         startActivity(Intent.createChooser(send, getString(R.string.export_chooser)));
 
         updateStatus();
-        toast("Exported with metadata → " + LogCaptureService.EXPORT_FILE_PATH);
+        toast("Exported → " + LogPaths.getExportFile(this).getAbsolutePath());
+    }
+
+    private boolean hasReadLogsPermission() {
+        return checkSelfPermission("android.permission.READ_LOGS")
+                == PackageManager.PERMISSION_GRANTED;
     }
 
     private void toast(String msg) {
@@ -321,6 +367,7 @@ public class MainActivity extends Activity {
         public interface Lifecycle {
             void onReaderStarted();
             void onReaderStopped();
+            void onReaderError(String message);
         }
 
         private final Listener listener;
@@ -338,13 +385,12 @@ public class MainActivity extends Activity {
 
         @Override
         public void run() {
+            Log.i("IceCamLogSpy", "Logcat reader thread running");
             while (running) {
                 Process process = null;
                 try {
                     notifyStarted();
-                    process = new ProcessBuilder("logcat", "-v", "threadtime")
-                            .redirectErrorStream(true)
-                            .start();
+                    process = startLogcatProcess();
 
                     try (BufferedReader reader = new BufferedReader(
                             new InputStreamReader(process.getInputStream()), 16384)) {
@@ -355,8 +401,8 @@ public class MainActivity extends Activity {
                             }
                         }
                     }
-                } catch (Exception ignored) {
-                    // logcat process died — loop restarts below
+                } catch (Exception e) {
+                    notifyError("Logcat error: " + e.getMessage());
                 } finally {
                     notifyStopped();
                     if (process != null) {
@@ -369,6 +415,30 @@ public class MainActivity extends Activity {
                 }
             }
             notifyStopped();
+        }
+
+        private Process startLogcatProcess() throws IOException {
+            String[][] attempts = {
+                    {"/system/bin/logcat", "-v", "threadtime"},
+                    {"logcat", "-v", "threadtime"},
+            };
+            IOException last = null;
+            for (String[] cmd : attempts) {
+                try {
+                    return new ProcessBuilder(cmd)
+                            .redirectErrorStream(true)
+                            .start();
+                } catch (IOException e) {
+                    last = e;
+                }
+            }
+            throw last != null ? last : new IOException("logcat not found");
+        }
+
+        private void notifyError(String message) {
+            if (lifecycle != null) {
+                lifecycle.onReaderError(message);
+            }
         }
 
         private void notifyStarted() {
