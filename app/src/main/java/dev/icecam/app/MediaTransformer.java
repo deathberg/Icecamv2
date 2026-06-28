@@ -113,28 +113,20 @@ public final class MediaTransformer {
             return sourcePath;
         }
     }
+    private static final int BAKE_CANVAS_W = 1280;
+    private static final int BAKE_CANVAS_H = 720;
+
     private static int[] resolveStableOutputSize(Context ctx, String sourcePath, int srcW, int srcH, TransformState s, AppLogger log) {
         SharedPreferences prefs = ctx.getSharedPreferences("app_config", Context.MODE_PRIVATE);
         int w = prefs.getInt("StableOutputWidth", 0);
         int h = prefs.getInt("StableOutputHeight", 0);
         if (w >= 16 && h >= 16) return new int[]{w, h};
 
-        String baked = prefs.getString("BakedPlayFileMp4", "");
-        int[] fromBaked = probeImageSize(baked);
-        if (fromBaked[0] >= 16 && fromBaked[1] >= 16) {
-            w = fromBaked[0];
-            h = fromBaked[1];
-        } else {
-            int playAngle = prefs.getInt("PlayAngle", s.rotationQuadrant() * 90);
-            boolean initialSwap = Math.abs(playAngle / 90) % 2 == 1;
-            w = initialSwap ? srcH : srcW;
-            h = initialSwap ? srcW : srcH;
-        }
-
-        w = Math.max(16, w);
-        h = Math.max(16, h);
+        // Camera injection expects a modest fixed canvas (reference used 640x480).
+        w = BAKE_CANVAS_W;
+        h = BAKE_CANVAS_H;
         prefs.edit().putInt("StableOutputWidth", w).putInt("StableOutputHeight", h).apply();
-        if (log != null) log.log("bake", "stable output canvas locked " + w + "x" + h + " source=" + sourcePath);
+        if (log != null) log.log("bake", "stable output canvas " + w + "x" + h + " source=" + sourcePath + " src=" + srcW + "x" + srcH);
         return new int[]{w, h};
     }
 

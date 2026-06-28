@@ -228,7 +228,8 @@ public class MainActivity extends Activity {
     private void selectSlot(int slot) {
         String path = prefs.getString(slotKey(slot), "");
         if (path == null || path.length() == 0) { pickIntoSlot(slot); return; }
-        prefs.edit().putInt("PlayFileType", MediaPaths.playFileType(path)).apply();
+        prefs.edit().putInt("PlayFileType", MediaPaths.playFileType(path))
+                .remove("StableOutputWidth").remove("StableOutputHeight").apply();
         controller.selectMedia(TransformController.Source.MAIN, slot, path);
         logger.log("media", "active slot M" + slot + " path=" + path);
         lastPreviewKey = "";
@@ -243,7 +244,8 @@ public class MainActivity extends Activity {
             try { getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Throwable ignored) {}
             String path = MediaResolver.resolveToReadableFile(this, uri, logger);
             int slot = Math.max(1, Math.min(4, pendingPickSlot));
-            prefs.edit().putString(slotKey(slot), path).putInt("PlayFileType", MediaPaths.playFileType(path)).apply();
+            prefs.edit().putString(slotKey(slot), path).putInt("PlayFileType", MediaPaths.playFileType(path))
+                    .remove("StableOutputWidth").remove("StableOutputHeight").apply();
             controller.selectMedia(TransformController.Source.MAIN, slot, path);
             logger.log("media", "selected slot M" + slot + " path=" + path);
             lastPreviewKey = "";

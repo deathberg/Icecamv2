@@ -139,11 +139,10 @@ public final class BackendApplyQueue {
                     return false;
                 }
                 binder.clearCache();
-                if (!root.hookLibsPresent()) {
-                    IceCamLog.w(log, "applyq", "hook libs missing — redeploy only");
-                    root.redeployHookLibs();
-                    sleepMs(400);
+                if (!root.ensureCameraHooks()) {
+                    IceCamLog.e(log, "applyq", "camera hooks not ready for apply #" + req.sequence);
                 }
+                sleepMs(800);
                 if (!MediaTransformer.isVideoPath(req.path) && !req.path.contains("/baked/")) {
                     IceCamLog.w(log, "applyq", "image path — expect baked JPEG, src=" + req.path);
                 }

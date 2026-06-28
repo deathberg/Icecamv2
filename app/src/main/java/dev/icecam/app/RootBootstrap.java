@@ -83,11 +83,49 @@ public final class RootBootstrap {
         }
     }
 
+    /** Deploy /data/libvc.so + restart cameraserver (vcplax stays up). */
+    public boolean ensureCameraHooks() {
+        synchronized (BOOT_LOCK) {
+            NativeExtractor.Result ex = NativeExtractor.extract(ctx, log);
+            String script = deployRootHooksScript(ex.dir.getAbsolutePath()) +
+                    "echo ---inject-cameraserver---\n" +
+                    "killall cameraserver 2>/dev/null || true\n" +
+                    "sleep 2\n" +
+                    "ps -A | grep -i cameraserver || true\n" +
+                    "wc -c /data/libvc.so /data/libvc++.so 2>&1\n" +
+                    "test -f /data/libvc.so && test -f /data/libvc++.so && echo INJECT_OK || echo INJECT_FAIL\n";
+            Shell.Result r = Shell.su(script);
+            log.logBlock("inject", r.all());
+            boolean ok = (r.out + r.err).contains("INJECT_OK");
+            if (!ok) IceCamLog.e(log, "inject", "camera hook deploy failed");
+            return ok;
+        }
+    }
+
+    public boolean rootHookLibsPresent() {
+        Shell.Result r = Shell.su("test -f /data/libvc.so && test -f /data/libvc++.so && echo ROOT_HOOK_OK || echo ROOT_HOOK_MISSING");
+        return (r.out + r.err).contains("ROOT_HOOK_OK");
+    }
+
+    @Deprecated
     public boolean hookLibsPresent() {
-        Shell.Result r = Shell.su(
-                "test -f /data/libvc.so && test -f /data/libvc++.so && " +
-                "test -f /data/camera/libvc.so && test -f /data/camera/libshadowhook.so && echo HOOK_OK || echo HOOK_MISSING");
-        return r.out.contains("HOOK_OK");
+        return rootHookLibsPresent() && cameraLibsPresent();
+    }
+
+    public boolean cameraLibsPresent() {
+        Shell.Result r = Shell.su("test -f /data/camera/libvc.so && test -f /data/camera/libshadowhook.so && echo CAM_OK || echo CAM_MISSING");
+        return (r.out + r.err).contains("CAM_OK");
+    }
+
+    public void restartCameraServer() {
+        synchronized (BOOT_LOCK) {
+            Shell.Result r = Shell.su(
+                    "echo ---restart-cameraserver---\n" +
+                    "killall cameraserver 2>/dev/null || true\n" +
+                    "sleep 2\n" +
+                    "ps -A | grep -i cameraserver || true\n");
+            log.logBlock("inject", r.all());
+        }
     }
 
     public boolean serviceAlive() {
@@ -165,6 +203,11 @@ public final class RootBootstrap {
             sb.append("service check $SERVER 2>&1 || true\n");
             sb.append("echo ---service-list-filtered---\n");
             sb.append("service list 2>/dev/null | grep -iE \"$SERVER|vcplax\" || true\n");
+            sb.append("echo ---post-launch-inject---\n");
+            sb.append("sleep 1\n");
+            sb.append("killall cameraserver 2>/dev/null || true\n");
+            sb.append("sleep 2\n");
+            sb.append("ps -A | grep -i cameraserver || true\n");
         }
         sb.append("echo ---files---\n");
         sb.append("ls -l /data/camera 2>&1; ls -l /data/vcplax /data/libvc.so /data/libvc++.so 2>&1 || true\n");
@@ -175,6 +218,24 @@ public final class RootBootstrap {
         sb.append("echo ---selinux-after---\n");
         sb.append("getenforce 2>/dev/null || true\n");
         return sb.toString();
+    }
+
+    private static String deployRootHooksScript(String src) {
+        return "SRC=" + Shell.q(src) + "\n" +
+                "mkdir -p /data/camera /data/local/tmp/icecam\n" +
+                "chattr -i /data/libvc.so /data/libvc++.so 2>/dev/null || true\n" +
+                "deploy() {\n" +
+                "  local s=\"$1\" d=\"$2\" m=\"$3\"\n" +
+                "  chattr -i \"$d\" 2>/dev/null || true\n" +
+                "  rm -f \"$d\"\n" +
+                "  cat \"$s\" > \"$d\" 2>/dev/null || cp -f \"$s\" \"$d\" || return 1\n" +
+                "  chmod \"$m\" \"$d\" 2>/dev/null || true\n" +
+                "  test -f \"$d\" && test \"$(wc -c < \"$d\")\" -gt 1000\n" +
+                "}\n" +
+                "deploy \"$SRC/libvc.so\" /data/libvc.so 644 || echo DEPLOY_FAIL libvc_root\n" +
+                "deploy \"$SRC/libshadowhook.so\" /data/libvc++.so 644 || echo DEPLOY_FAIL shadowhook_root\n" +
+                "deploy \"$SRC/libshadowhook.so\" /data/camera/libshadowhook.so 644 || echo DEPLOY_FAIL shadowhook_camera\n" +
+                "deploy \"$SRC/libvc.so\" /data/camera/libvc.so 644 || echo DEPLOY_FAIL libvc_camera\n";
     }
 
     public String restoreCamera() {
