@@ -9,8 +9,8 @@ import java.util.Arrays;
 import java.util.Locale;
 
 /**
- * Background TX13 poller matching original App.java 1 Hz heartbeat.
- * Updates SharedPreferences counters and backend playback status from TX15 when available.
+ * Background TX13/TX15 poller (~1 Hz). Updates poll counters only.
+ * Does NOT flip {@code ReplacementActive} — that flag is owned by apply/restore paths.
  */
 public final class BinderPollScheduler {
     private static final long POLL_INTERVAL_MS = 1000L;
@@ -23,6 +23,7 @@ public final class BinderPollScheduler {
     private final VliveBinderClient binder;
     private final SharedPreferences prefs;
     private int[] lastCounters = new int[0];
+    private int unchangedPolls;
     private boolean running;
 
     private BinderPollScheduler(Context context) {
@@ -51,14 +52,14 @@ public final class BinderPollScheduler {
         if (running) return;
         running = true;
         handler.post(tick);
-        log.log("poll", "TX13 scheduler started");
+        IceCamLog.i(log, "poll", "scheduler started interval=" + POLL_INTERVAL_MS + "ms");
     }
 
     public void stop() {
         running = false;
         handler.removeCallbacks(tick);
         binder.release();
-        log.log("poll", "TX13 scheduler stopped");
+        IceCamLog.i(log, "poll", "scheduler stopped");
     }
 
     private void pollOnce() {
@@ -66,27 +67,26 @@ public final class BinderPollScheduler {
         try {
             binder.setPreferredService(RootBootstrap.FIXED_SERVICE_NAME);
             int[] counters = binder.pollState();
-            if (counters.length > 0 && !Arrays.equals(counters, lastCounters)) {
-                SharedPreferences.Editor ed = prefs.edit();
-                for (int i = 0; i < counters.length; i++) ed.putInt("PollCounter" + i, counters[i]);
-                ed.putString("PollCounters", formatCounters(counters));
-                ed.apply();
-                log.log("poll", "TX13 " + formatCounters(counters));
-                lastCounters = counters.clone();
-            }
+            int tx15 = binder.connected() ? binder.getInt15() : -1;
 
-            if (binder.connected()) {
-                int status = binder.getInt15();
-                boolean playing = status == 5;
-                if (playing != prefs.getBoolean("ReplacementActive", false)) {
-                    prefs.edit()
-                            .putBoolean("ReplacementActive", playing)
-                            .putString("IceCamState", playing ? "REPLACEMENT_ACTIVE" : "IDLE")
-                            .apply();
+            if (counters.length > 0) {
+                if (Arrays.equals(counters, lastCounters)) unchangedPolls++;
+                else {
+                    unchangedPolls = 0;
+                    SharedPreferences.Editor ed = prefs.edit();
+                    for (int i = 0; i < counters.length; i++) ed.putInt("PollCounter" + i, counters[i]);
+                    ed.putString("PollCounters", formatCounters(counters));
+                    ed.putInt("PollTx15", tx15);
+                    ed.apply();
+                    IceCamLog.poll(log, counters, tx15);
+                    lastCounters = counters.clone();
+                }
+                if (unchangedPolls > 0 && unchangedPolls % 15 == 0) {
+                    IceCamLog.poll(log, counters, tx15);
                 }
             }
         } catch (Throwable t) {
-            if (log != null) log.log("poll", "TX13 poll failed: " + t);
+            IceCamLog.e(log, "poll", "failed: " + t);
         } finally {
             if (running) handler.postDelayed(tick, POLL_INTERVAL_MS);
         }

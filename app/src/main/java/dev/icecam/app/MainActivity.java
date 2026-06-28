@@ -140,7 +140,11 @@ public class MainActivity extends Activity {
         row4.addView(bigButton("CENTER", v -> mutate("center"), UiKit.PANEL_3), weight(1.15f));
         body.addView(row4);
 
-        body.addView(bigButton("▶  PLAY / COMMIT", v -> { controller.commit(TransformController.Source.MAIN, "play-commit"); refreshAll(); }, UiKit.PANEL_3), fullBtn());
+        body.addView(bigButton("▶  PLAY / COMMIT", v -> {
+            IceCamLog.marker(logger, "BTN_COMMIT", "slot=M" + activeSlot());
+            controller.commit(TransformController.Source.MAIN, "play-commit");
+            refreshAll();
+        }, UiKit.PANEL_3), fullBtn());
 
         mediaLabel = text("", 12, false, UiKit.MUTED);
         mediaLabel.setGravity(Gravity.CENTER);
@@ -249,6 +253,7 @@ public class MainActivity extends Activity {
     }
 
     private void mutate(String op) {
+        IceCamLog.marker(logger, "TRANSFORM", op);
         controller.mutate(TransformController.Source.MAIN, op, MAIN_AUTO_COMMIT);
         refreshAll();
     }
@@ -262,8 +267,14 @@ public class MainActivity extends Activity {
 
     private void startOrRestore() {
         if (controller.isBusy()) { toast("Busy"); return; }
-        if (prefs.getBoolean("ReplacementActive", false)) controller.restoreCamera(TransformController.Source.MAIN);
-        else controller.startReplacement(TransformController.Source.MAIN);
+        boolean active = prefs.getBoolean("ReplacementActive", false);
+        if (active) {
+            IceCamLog.marker(logger, "BTN_RESTORE", "ReplacementActive=true");
+            controller.restoreCamera(TransformController.Source.MAIN);
+        } else {
+            IceCamLog.marker(logger, "BTN_START", "slot=M" + activeSlot());
+            controller.startReplacement(TransformController.Source.MAIN);
+        }
         refreshAll();
     }
 
@@ -307,9 +318,9 @@ public class MainActivity extends Activity {
     private void refreshAll() {
         runOnUiThread(() -> {
             tx = TransformState.load(prefs);
-            boolean active = prefs.getBoolean("ReplacementActive", false);
+            boolean streamActive = prefs.getBoolean("ReplacementActive", false);
             String phase = prefs.getString("IceCamState", "IDLE");
-            boolean connected = active || phase.contains("READY") || phase.contains("ACTIVE");
+            boolean daemonUp = binder.connected();
             boolean busy = controller.isBusy();
 
             String p = prefs.getString("OriginalPlayFileMp4", prefs.getString("PlayFileMp4", ""));
@@ -320,20 +331,20 @@ public class MainActivity extends Activity {
             }
             preview.setTransformState(tx);
 
-            String backend = connected ? "READY" : (active ? "RUNNING / IPC?" : "OFF");
+            String backend = daemonUp ? "DAEMON UP" : "DAEMON DOWN";
             String transform = phase;
             statusScreen.setText(String.format(Locale.US,
-                    "Backend: %s  ·  Replacement: %s  ·  Transform: %s\nSource: M%d  ·  %s  ·  %s",
-                    backend, active ? "ACTIVE" : "OFF", transform,
+                    "Backend: %s  ·  Stream: %s  ·  Phase: %s\nSource: M%d  ·  %s  ·  %s",
+                    backend, streamActive ? "ACTIVE" : "OFF", transform,
                     activeSlot(), tx.modeName(), tx.summary()));
-            statusScreen.setTextColor(active ? 0xffa7ffd2 : (connected ? UiKit.WARN : 0xffffb0b0));
+            statusScreen.setTextColor(streamActive ? 0xffa7ffd2 : (daemonUp ? UiKit.WARN : 0xffffb0b0));
             rotationLabel.setText("Rotation: " + rotationLabelValue() + "°");
             fillButton.setText(tx.mode == TransformState.MODE_FILL ? "FILL" : "FIT");
             fillButton.setSelected(tx.mode == TransformState.MODE_FILL || tx.mode == TransformState.MODE_FIT);
             loopButton.setText(prefs.getBoolean("PlayisLoop", true) ? "LOOP ON" : "LOOP OFF");
-            startRestoreButton.setText(busy ? "● BUSY…" : (active ? "● RESTORE CAMERA" : "● START STREAM"));
+            startRestoreButton.setText(busy ? "● BUSY…" : (streamActive ? "● RESTORE CAMERA" : "● START STREAM"));
             startRestoreButton.setEnabled(!busy);
-            startRestoreButton.setSelected(active);
+            startRestoreButton.setSelected(streamActive);
             String play = prefs.getString("PlayFileMp4", "");
             mediaLabel.setText((play == null || play.length() == 0 ? "No active media" : shortName(play)) + "   ·   realtime preview, press PLAY/COMMIT to apply   ·   " + BuildInfo.VERSION_NAME + " · marker #" + prefs.getLong("LastMarkerId", 0L));
             renderSlots();
@@ -353,7 +364,7 @@ public class MainActivity extends Activity {
             logger.log("diag", "snapshot built chars=" + diag.length());
             Intent i = new Intent(Intent.ACTION_SEND);
             i.setType("text/plain");
-            i.putExtra(Intent.EXTRA_TEXT, diag + "\n\n--- runtime-log-ring ---\n" + logger.text());
+            i.putExtra(Intent.EXTRA_TEXT, diag + "\n\n--- runtime-log (filtered) ---\n" + logger.exportRing());
             startActivity(Intent.createChooser(i, "Export IceCam diagnostics"));
         } catch (Throwable t) { toast("Export failed: " + t.getMessage()); }
     }

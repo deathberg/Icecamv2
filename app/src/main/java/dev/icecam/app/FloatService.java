@@ -190,18 +190,24 @@ public class FloatService extends Service {
 
     private void startOrRestore() {
         if (controller.isBusy()) { toast("Busy"); return; }
-        if (prefs.getBoolean("ReplacementActive", false)) controller.restoreCamera(TransformController.Source.FLOAT);
-        else controller.startReplacement(TransformController.Source.FLOAT);
+        if (prefs.getBoolean("ReplacementActive", false)) {
+            IceCamLog.marker(log, "FLOAT_RESTORE", "");
+            controller.restoreCamera(TransformController.Source.FLOAT);
+        } else {
+            IceCamLog.marker(log, "FLOAT_START", "");
+            controller.startReplacement(TransformController.Source.FLOAT);
+        }
     }
 
     private void mutate(String op) {
+        IceCamLog.marker(log, "FLOAT_TRANSFORM", op);
         TransformState s = controller.mutate(TransformController.Source.FLOAT, op, FLOAT_AUTO_COMMIT);
-        log.log("float", "command source=FLOAT op=" + op + " routed=TransformController autoCommit=" + FLOAT_AUTO_COMMIT + " " + s.summary());
+        log.log("float", "op=" + op + " " + s.summary());
         refresh();
     }
 
     private void commit() {
-        log.log("float", "commit routed to TransformController; no direct Binder/TX in FloatService");
+        IceCamLog.marker(log, "FLOAT_COMMIT", "");
         controller.commit(TransformController.Source.FLOAT, "float-commit");
         refreshDelayed();
     }

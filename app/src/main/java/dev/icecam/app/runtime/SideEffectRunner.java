@@ -3,6 +3,7 @@ package dev.icecam.app.runtime;
 import android.content.Context;
 import dev.icecam.app.AppLogger;
 import dev.icecam.app.BackendApplyQueue;
+import dev.icecam.app.IceCamLog;
 import dev.icecam.app.RootBootstrap;
 import dev.icecam.app.TransformState;
 import dev.icecam.app.VliveBinderClient;
@@ -35,6 +36,7 @@ public final class SideEffectRunner {
                     String opId = "commit-" + c.id;
                     boolean ok = false;
                     try {
+                        IceCamLog.marker(log, "COMMIT", "source=" + c.source.name());
                         ok = sendTransformBestEffort(state.transform);
                         String path = state.media.originalPath.length() > 0 ? state.media.originalPath : state.media.playPath;
                         if (path.length() > 0) BackendApplyQueue.get(context).enqueue(path, "runtime-commit-" + c.source.name().toLowerCase(), true);
@@ -47,12 +49,18 @@ public final class SideEffectRunner {
                     String opId = "start-" + c.id;
                     boolean ok = false;
                     try {
+                        IceCamLog.marker(log, "START_STREAM", "source=" + c.source.name());
                         binder.setPreferredService(RootBootstrap.FIXED_SERVICE_NAME);
                         if (!binder.connected()) { root.bootstrap(); binder.clearCache(); sleep(350); }
                         ok = sendTransformBestEffort(state.transform);
                         String path = state.media.originalPath.length() > 0 ? state.media.originalPath : state.media.playPath;
-                        if (path.length() > 0) BackendApplyQueue.get(context).enqueue(path, "runtime-start-" + c.source.name().toLowerCase(), true);
-                    } catch (Throwable t) { if (log != null) log.log("runtime", "start side effect failed #" + c.id + ": " + t); }
+                        if (path.length() > 0) {
+                            BackendApplyQueue.get(context).enqueue(path, "runtime-start-" + c.source.name().toLowerCase(), true);
+                            ok = true;
+                        } else {
+                            IceCamLog.w(log, "runtime", "start skipped: no media path");
+                        }
+                    } catch (Throwable t) { IceCamLog.e(log, "runtime", "start failed #" + c.id + ": " + t); }
                     bus.dispatch(RuntimeCommand.opFinished(opId, ok));
                 });
                 break;
@@ -60,8 +68,16 @@ public final class SideEffectRunner {
                 io.execute(() -> {
                     String opId = "restore-" + c.id;
                     boolean ok = false;
-                    try { root.restoreCamera(); binder.clearCache(); ok = true; }
-                    catch (Throwable t) { if (log != null) log.log("runtime", "restore side effect failed #" + c.id + ": " + t); }
+                    try {
+                        IceCamLog.marker(log, "RESTORE_CAMERA", "source=" + c.source.name());
+                        root.restoreCamera();
+                        binder.clearCache();
+                        context.getSharedPreferences("app_config", Context.MODE_PRIVATE).edit()
+                                .putBoolean("ReplacementActive", false)
+                                .putString("IceCamState", "RESTORED")
+                                .apply();
+                        ok = true;
+                    } catch (Throwable t) { IceCamLog.e(log, "runtime", "restore failed #" + c.id + ": " + t); }
                     bus.dispatch(RuntimeCommand.opFinished(opId, ok));
                 });
                 break;

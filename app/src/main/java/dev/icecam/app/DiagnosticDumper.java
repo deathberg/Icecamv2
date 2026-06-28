@@ -13,7 +13,7 @@ public final class DiagnosticDumper {
     private DiagnosticDumper() {}
 
     public static String build(Context ctx, AppLogger log, VliveBinderClient binder) {
-        StringBuilder sb = new StringBuilder(16384);
+        StringBuilder sb = new StringBuilder(12000);
         SharedPreferences prefs = ctx.getSharedPreferences("app_config", Context.MODE_PRIVATE);
         sb.append("===== ICECAM DIAGNOSTIC SNAPSHOT =====\n");
         sb.append("time=").append(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(new Date())).append('\n');
@@ -27,27 +27,40 @@ public final class DiagnosticDumper {
                 .append(" total=").append(rt.totalMemory() / 1024L)
                 .append(" max=").append(rt.maxMemory() / 1024L).append('\n');
         sb.append("logFile=").append(log != null && log.file() != null ? log.file().getAbsolutePath() : "<none>").append('\n');
-        sb.append("\n--- prefs ---\n");
-        for (Map.Entry<String, ?> e : prefs.getAll().entrySet()) sb.append(e.getKey()).append('=').append(e.getValue()).append('\n');
+
+        sb.append("\n--- state ---\n");
+        sb.append("ReplacementActive=").append(prefs.getBoolean("ReplacementActive", false)).append('\n');
+        sb.append("IceCamState=").append(prefs.getString("IceCamState", "IDLE")).append('\n');
+        sb.append("PollCounters=").append(prefs.getString("PollCounters", "")).append('\n');
+        sb.append("PollTx15=").append(prefs.getInt("PollTx15", -1)).append('\n');
+        sb.append("PlayFileMp4=").append(prefs.getString("PlayFileMp4", "")).append('\n');
+        sb.append("ActiveSlot=").append(prefs.getInt("ActiveSlot", 1)).append('\n');
+
+        sb.append("\n--- prefs (core) ---\n");
+        String[] keys = {"ServerName", "TransformMode", "PlayisLoop", "PlayMirror", "PlayAngle", "EnableTx24Color", "LastTransformReason"};
+        for (String k : keys) {
+            if (prefs.contains(k)) sb.append(k).append('=').append(prefs.getAll().get(k)).append('\n');
+        }
+
         sb.append("\n--- files ---\n");
         appendDir(sb, ctx.getFilesDir(), "files", 2);
-        appendDir(sb, ctx.getExternalFilesDir(null), "externalFiles", 2);
-        File baked = new File(ctx.getExternalFilesDir(null), "baked");
-        appendDir(sb, baked, "baked", 64);
+        appendDir(sb, ctx.getExternalFilesDir(null), "externalFiles", 3);
+
         sb.append("\n--- binder-java ---\n");
         try { sb.append(binder != null ? binder.diagnostics() : "binder=null\n"); } catch (Throwable t) { sb.append("binder diagnostics failed: ").append(t).append('\n'); }
+
         sb.append("\n--- root-native ---\n");
         try {
             Shell.Result r = Shell.su("" +
                     "echo ---id---; id; " +
                     "echo ---getenforce---; getenforce 2>/dev/null; " +
                     "echo ---service-check---; service check privsam_service 2>&1; " +
-                    "echo ---process---; ps -A | grep -iE 'vcplax|privsam' 2>/dev/null; " +
+                    "echo ---process---; ps -A | grep -iE 'vcplax|cameraserver' 2>/dev/null; " +
+                    "echo ---lib-sizes---; wc -c /data/libvc.so /data/libvc++.so /data/camera/libvc.so /data/camera/vcplax 2>&1; " +
                     "echo ---data-camera---; ls -l /data/camera 2>&1; " +
-                    "echo ---data-vcplax---; ls -l /data/vcplax /data/libvc.so /data/libvc++.so 2>&1; " +
-                    "echo ---vcplax.log---; tail -120 /data/camera/vcplax.log 2>&1; " +
-                    "echo ---vcplax.err---; tail -120 /data/camera/vcplax.err 2>&1; " +
-                    "echo ---logcat-icecam---; logcat -d -v time -t 300 | grep -iE 'IceCam|icecam|vcplax|privsam|vlive|MediaCodec|BufferQueue|GraphicBuffer' 2>/dev/null");
+                    "echo ---vcplax.log---; tail -80 /data/camera/vcplax.log 2>&1; " +
+                    "echo ---vcplax.err---; tail -80 /data/camera/vcplax.err 2>&1; " +
+                    "echo ---logcat-icecam---; logcat -d -v time -t 120 -s IceCam:* 2>/dev/null");
             sb.append(r.all()).append('\n');
         } catch (Throwable t) { sb.append("root dump failed: ").append(t).append('\n'); }
         sb.append("===== END ICECAM DIAGNOSTIC SNAPSHOT =====\n");

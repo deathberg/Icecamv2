@@ -133,20 +133,29 @@ public final class BackendApplyQueue {
                     binder.clearCache();
                     sleepMs(250);
                 }
+                if (!MediaTransformer.isVideoPath(req.path)) {
+                    IceCamLog.w(log, "applyq", "media is not video — TX14/TX11 expect MP4/RTMP, path=" + req.path);
+                }
+                int playMode = MediaTransformer.isVideoPath(req.path) ? 1 : 1;
                 long tx14Start = android.os.SystemClock.elapsedRealtime();
-                int mode = binder.setModeString(1, req.path); // TX14 mode 1 -> path
+                int mode = binder.setModeString(playMode, req.path);
                 long tx14Ms = android.os.SystemClock.elapsedRealtime() - tx14Start;
                 sleepMs(520);
                 TransformState current = TransformState.load(prefs);
                 long tx11Start = android.os.SystemClock.elapsedRealtime();
-                int play = binder.playSource(req.path, current.mirrorH(), prefs.getBoolean("PlayisLoop", true)); // TX11
+                int play = binder.playSource(req.path, current.mirrorH(), prefs.getBoolean("PlayisLoop", true));
                 long tx11Ms = android.os.SystemClock.elapsedRealtime() - tx11Start;
-                boolean active = mode >= 0 && play >= 0;
+                boolean modeOk = VliveBinderClient.isSetModeOk(mode);
+                boolean playOk = VliveBinderClient.isPlayOk(play);
+                boolean active = modeOk && playOk;
                 prefs.edit()
                         .putBoolean("ReplacementActive", active)
                         .putString("IceCamState", active ? "REPLACEMENT_ACTIVE" : "PLAY_ERROR")
                         .apply();
-                log.log("applyq", "legacy apply done #" + req.sequence + " TX14=" + mode + "(" + tx14Ms + "ms) TX11=" + play + "(" + tx11Ms + "ms) total=" + (android.os.SystemClock.elapsedRealtime() - t0) + "ms active=" + active);
+                IceCamLog.i(log, "applyq", "apply #" + req.sequence
+                        + " TX14=" + mode + (modeOk ? "(ok)" : "(fail)") + "/" + tx14Ms + "ms"
+                        + " TX11=" + play + (playOk ? "(ok)" : "(fail)") + "/" + tx11Ms + "ms"
+                        + " active=" + active + " total=" + (android.os.SystemClock.elapsedRealtime() - t0) + "ms");
                 if (!active) binder.clearCache();
                 return active;
             } catch (Throwable t) {

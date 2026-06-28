@@ -31,7 +31,9 @@ public final class NativeExtractor {
                 if (e == null) { ok = false; sb.append("missing ").append(entryName).append('\n'); continue; }
                 File dst = new File(outDir, n);
                 copy(zip.getInputStream(e), dst);
-                sb.append("extracted ").append(entryName).append(" -> ").append(dst.getAbsolutePath()).append(" size=").append(dst.length()).append('\n');
+                String note = n.equals("libvc.so") && dst.length() < 200_000 ? " WARN:stub-libvc" : "";
+                sb.append("extracted ").append(entryName).append(" -> ").append(dst.getAbsolutePath())
+                        .append(" size=").append(dst.length()).append(note).append('\n');
             }
             zip.close();
         } catch (Throwable t) { ok = false; sb.append("extract error: ").append(t).append('\n'); }

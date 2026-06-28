@@ -60,7 +60,7 @@ public final class RootBootstrap {
                 "for i in 1 2 3 4 5; do sleep 1; service check $SERVER 2>&1 | grep -qi found && break; done\n" +
                 "echo ---process---\nps -A | grep -i vcplax || ps | grep -i vcplax || true\n" +
                 "echo ---expected-service---\nservice check $SERVER 2>&1 || true\n" +
-                "echo ---service-list-filtered---\nservice list 2>/dev/null | grep -iE \"$SERVER|vlive|camera|media|ice|vcplax\" || true\n" +
+                "echo ---service-list-filtered---\nservice list 2>/dev/null | grep -iE \"^$SERVER$|vcplax\" || true\n" +
                 "echo ---files---\nls -l /data/camera 2>&1; ls -l /data/vcplax /data/libvc.so /data/libvc++.so 2>&1 || true\n" +
                 "echo ---vcplax.log---\ncat /data/camera/vcplax.log 2>/dev/null || true\n" +
                 "echo ---vcplax.err---\ncat /data/camera/vcplax.err 2>/dev/null || true\n" +
@@ -105,7 +105,7 @@ public final class RootBootstrap {
                 "echo ---selinux---\ngetenforce 2>/dev/null || true\n" +
                 "echo ---process---\nps -A | grep -i vcplax || ps | grep -i vcplax || true\n" +
                 "echo ---expected-service---\nservice check $SERVER 2>&1 || true\n" +
-                "echo ---service-list-filtered---\nservice list 2>/dev/null | grep -iE \"$SERVER|vlive|camera|media|ice|vcplax\" || true\n" +
+                "echo ---service-list-filtered---\nservice list 2>/dev/null | grep -iE \"^$SERVER$|vcplax\" || true\n" +
                 "echo ---files---\nls -l /data/camera 2>&1; ls -l /data/vcplax /data/libvc.so /data/libvc++.so 2>&1 || true\n" +
                 "echo ---vcplax-log---\ntail -160 /data/camera/vcplax.log 2>/dev/null || true\n" +
                 "echo ---vcplax-err---\ntail -160 /data/camera/vcplax.err 2>/dev/null || true\n" +

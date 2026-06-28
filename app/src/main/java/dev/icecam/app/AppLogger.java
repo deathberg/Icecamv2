@@ -1,19 +1,21 @@
 package dev.icecam.app;
 
-import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
-import java.util.concurrent.atomic.AtomicLong;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class AppLogger {
     public interface Listener { void onLogChanged(String text); }
-    private static final int MAX = 96000;
+
+    private static final int MAX = 48000;
+    private static final int EXPORT_MAX_LINES = 180;
     private static final long PROCESS_START_MS = SystemClock.elapsedRealtime();
     private static final AtomicLong SEQ = new AtomicLong(1L);
     private final StringBuilder buffer = new StringBuilder();
@@ -21,7 +23,7 @@ public final class AppLogger {
     private final File file;
     private Listener listener;
 
-    public AppLogger(Context ctx) {
+    public AppLogger(android.content.Context ctx) {
         file = new File(ctx.getExternalFilesDir(null), "icecam-runtime.log");
         log("logger", "file=" + file.getAbsolutePath());
     }
@@ -29,6 +31,30 @@ public final class AppLogger {
     public void setListener(Listener l) { listener = l; if (l != null) l.onLogChanged(buffer.toString()); }
     public File file() { return file; }
     public String text() { return buffer.toString(); }
+
+    /** Recent lines for export — skips noisy root service-list spam. */
+    public String exportRing() {
+        synchronized (buffer) {
+            String[] lines = buffer.toString().split("\n");
+            StringBuilder out = new StringBuilder();
+            int kept = 0;
+            for (int i = lines.length - 1; i >= 0 && kept < EXPORT_MAX_LINES; i--) {
+                String line = lines[i];
+                if (line.length() == 0) continue;
+                if (isNoisyRootLine(line)) continue;
+                out.insert(0, line + '\n');
+                kept++;
+            }
+            if (kept == 0) return buffer.toString();
+            return out.toString();
+        }
+    }
+
+    private static boolean isNoisyRootLine(String line) {
+        if (!line.contains("[root]")) return false;
+        return line.contains("media.") || line.contains("miui.") || line.contains("android.")
+                || line.contains("vendor.") || line.contains("Found ") && line.contains("services");
+    }
 
     public void log(String tag, String msg) {
         long id = SEQ.getAndIncrement();
@@ -56,6 +82,12 @@ public final class AppLogger {
     public void logBlock(String tag, String block) {
         if (block == null || block.length() == 0) { log(tag, "<empty>"); return; }
         String[] lines = block.split("\\n");
-        for (String l : lines) if (l.trim().length() > 0) log(tag, l);
+        int limit = "root".equals(tag) ? 48 : 120;
+        int n = Math.min(lines.length, limit);
+        for (int i = 0; i < n; i++) {
+            String l = lines[i].trim();
+            if (l.length() > 0) log(tag, l);
+        }
+        if (lines.length > limit) log(tag, "... truncated " + (lines.length - limit) + " more lines");
     }
 }
