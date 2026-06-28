@@ -2,11 +2,10 @@ package com.icecam.logspy;
 
 import android.app.Activity;
 import android.content.BroadcastReceiver;
-import android.content.ClipData;
-import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -19,8 +18,10 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
@@ -29,7 +30,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * IceCam-Log-Spy — minimal logcat monitor and black-box recorder.
+ * IceCam-Log-Spy — logcat monitor with AI-friendly NDJSON export and metadata dump.
  *
  * <p>READ_LOGS must be granted via adb after install:
  * <pre>adb shell pm grant com.icecam.logspy android.permission.READ_LOGS</pre>
@@ -38,25 +39,49 @@ public class MainActivity extends Activity {
 
     private static final int MAX_UI_LINES = 800;
     private static final long UI_FLUSH_MS = 150;
+    private static final int COLOR_GREEN = 0xFF00C853;
+    private static final int COLOR_RED = 0xFFD50000;
+    private static final int COLOR_GRAY = 0xFF757575;
 
     private TextView tvLog;
     private TextView tvStatus;
     private ScrollView scrollLog;
+    private View indicator;
+    private Button btnStart;
+    private Button btnStop;
 
     private final Handler uiHandler = new Handler(Looper.getMainLooper());
     private final List<String> pendingLines = new ArrayList<>();
     private final StringBuilder screenBuffer = new StringBuilder(64 * 1024);
     private int screenLineCount = 0;
     private boolean flushScheduled = false;
+    private boolean recording = false;
+    private boolean readerAlive = false;
 
     private final BroadcastReceiver logReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (LogCaptureService.ACTION_LOG_LINE.equals(intent.getAction())) {
+            String action = intent.getAction();
+            if (LogCaptureService.ACTION_LOG_LINE.equals(action)) {
                 String line = intent.getStringExtra(LogCaptureService.EXTRA_LINE);
                 if (line != null) {
                     enqueueLine(line);
                 }
+            } else if (LogCaptureService.ACTION_UI_CLEAR.equals(action)) {
+                clearScreen();
+            }
+        }
+    };
+
+    private final BroadcastReceiver stateReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (LogCaptureService.ACTION_STATE.equals(intent.getAction())) {
+                recording = intent.getBooleanExtra(LogCaptureService.EXTRA_RECORDING, false);
+                readerAlive = intent.getBooleanExtra(LogCaptureService.EXTRA_READER_ALIVE, false);
+                updateIndicator();
+                updateButtonStates();
+                updateStatus();
             }
         }
     };
@@ -69,40 +94,95 @@ public class MainActivity extends Activity {
         tvLog = findViewById(R.id.tv_log);
         tvStatus = findViewById(R.id.tv_status);
         scrollLog = findViewById(R.id.scroll_log);
+        indicator = findViewById(R.id.indicator);
 
-        Button btnDump = findViewById(R.id.btn_dump);
-        Button btnShare = findViewById(R.id.btn_share);
+        btnStart = findViewById(R.id.btn_start);
+        btnStop = findViewById(R.id.btn_stop);
+        Button btnExport = findViewById(R.id.btn_export);
         Button btnClear = findViewById(R.id.btn_clear);
 
-        btnDump.setOnClickListener(v -> dumpToClipboard());
-        btnShare.setOnClickListener(v -> shareLogFile());
-        btnClear.setOnClickListener(v -> clearScreen());
+        setupIndicator();
+        btnStart.setOnClickListener(v -> sendCommand(LogCaptureService.CMD_START));
+        btnStop.setOnClickListener(v -> sendCommand(LogCaptureService.CMD_STOP));
+        btnExport.setOnClickListener(v -> exportWithMetadata());
+        btnClear.setOnClickListener(v -> sendCommand(LogCaptureService.CMD_CLEAR));
 
         updateStatus();
-
-        Intent serviceIntent = new Intent(this, LogCaptureService.class);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent);
-        } else {
-            startService(serviceIntent);
-        }
+        updateIndicator();
+        updateButtonStates();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        IntentFilter filter = new IntentFilter(LogCaptureService.ACTION_LOG_LINE);
+        IntentFilter logFilter = new IntentFilter();
+        logFilter.addAction(LogCaptureService.ACTION_LOG_LINE);
+        logFilter.addAction(LogCaptureService.ACTION_UI_CLEAR);
+        IntentFilter stateFilter = new IntentFilter(LogCaptureService.ACTION_STATE);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(logReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            registerReceiver(logReceiver, logFilter, Context.RECEIVER_NOT_EXPORTED);
+            registerReceiver(stateReceiver, stateFilter, Context.RECEIVER_NOT_EXPORTED);
         } else {
-            registerReceiver(logReceiver, filter);
+            registerReceiver(logReceiver, logFilter);
+            registerReceiver(stateReceiver, stateFilter);
         }
+        requestStateSync();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         unregisterReceiver(logReceiver);
+        unregisterReceiver(stateReceiver);
+    }
+
+    private void setupIndicator() {
+        GradientDrawable circle = new GradientDrawable();
+        circle.setShape(GradientDrawable.OVAL);
+        circle.setColor(COLOR_GRAY);
+        indicator.setBackground(circle);
+    }
+
+    private void updateIndicator() {
+        int color;
+        if (recording && readerAlive) {
+            color = COLOR_GREEN;
+        } else if (recording && !readerAlive) {
+            color = COLOR_RED; // logcat died while supposed to be recording
+        } else {
+            color = COLOR_RED;
+        }
+        GradientDrawable circle = new GradientDrawable();
+        circle.setShape(GradientDrawable.OVAL);
+        circle.setColor(color);
+        indicator.setBackground(circle);
+    }
+
+    private void updateButtonStates() {
+        btnStart.setEnabled(!recording);
+        btnStop.setEnabled(recording);
+    }
+
+    private void sendCommand(String cmd) {
+        Intent intent = new Intent(this, LogCaptureService.class);
+        intent.setAction(LogCaptureService.ACTION_CMD);
+        intent.putExtra(LogCaptureService.EXTRA_COMMAND, cmd);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent);
+        } else {
+            startService(intent);
+        }
+        if (LogCaptureService.CMD_CLEAR.equals(cmd)) {
+            clearScreen();
+            updateStatus();
+        }
+    }
+
+    private void requestStateSync() {
+        Intent ping = new Intent(this, LogCaptureService.class);
+        ping.setAction(LogCaptureService.ACTION_CMD);
+        ping.putExtra(LogCaptureService.EXTRA_COMMAND, LogCaptureService.CMD_STATUS);
+        startService(ping);
     }
 
     private void enqueueLine(String line) {
@@ -158,7 +238,8 @@ public class MainActivity extends Activity {
     private void updateStatus() {
         File f = new File(LogCaptureService.LOG_FILE_PATH);
         long kb = f.exists() ? f.length() / 1024 : 0;
-        tvStatus.setText("file: " + LogCaptureService.LOG_FILE_PATH + "  (" + kb + " KB)");
+        String state = recording ? (readerAlive ? "REC" : "STALLED") : "STOPPED";
+        tvStatus.setText("[" + state + "] " + LogCaptureService.LOG_FILE_PATH + " (" + kb + " KB)");
     }
 
     private String readLogFileContents() {
@@ -166,43 +247,51 @@ public class MainActivity extends Activity {
         if (!file.exists()) {
             return "";
         }
-        StringBuilder sb = new StringBuilder((int) Math.min(file.length(), 512 * 1024));
+        StringBuilder sb = new StringBuilder((int) Math.min(file.length(), 1024 * 1024));
         try (BufferedReader br = new BufferedReader(new FileReader(file), 8192)) {
             String line;
             while ((line = br.readLine()) != null) {
                 sb.append(line).append('\n');
             }
         } catch (IOException e) {
-            return "ERROR reading log file: " + e.getMessage();
+            return "{\"type\":\"error\",\"msg\":\"" + StructuredLog.jsonEscape(e.getMessage()) + "\"}\n";
         }
         return sb.toString();
     }
 
-    private void dumpToClipboard() {
-        String text = readLogFileContents();
-        if (TextUtils.isEmpty(text)) {
-            toast("Log file empty or missing");
-            return;
-        }
-        ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-        if (cm != null) {
-            cm.setPrimaryClip(ClipData.newPlainText("icecam_debug.log", text));
-            toast("Copied " + text.length() + " chars to clipboard");
-        }
-        updateStatus();
-    }
+    private void exportWithMetadata() {
+        String textHeader = SystemMetadata.buildTextHeader(this);
+        String jsonHeader = SystemMetadata.buildJsonHeader(this);
+        String logBody = readLogFileContents();
 
-    private void shareLogFile() {
-        File file = new File(LogCaptureService.LOG_FILE_PATH);
-        if (!file.exists()) {
-            toast("Log file not found");
+        if (TextUtils.isEmpty(logBody)) {
+            toast("Log file empty — start recording first");
             return;
         }
+
+        String exportContent = textHeader + jsonHeader + "\n" + logBody;
+
+        try {
+            File exportFile = new File(LogCaptureService.EXPORT_FILE_PATH);
+            File parent = exportFile.getParentFile();
+            if (parent != null && !parent.exists()) {
+                parent.mkdirs();
+            }
+            try (BufferedWriter bw = new BufferedWriter(new FileWriter(exportFile, false), 8192)) {
+                bw.write(exportContent);
+            }
+        } catch (IOException e) {
+            toast("Export file write failed: " + e.getMessage());
+        }
+
         Intent send = new Intent(Intent.ACTION_SEND);
         send.setType("text/plain");
-        send.putExtra(Intent.EXTRA_SUBJECT, "icecam_debug.log");
-        send.putExtra(Intent.EXTRA_TEXT, readLogFileContents());
-        startActivity(Intent.createChooser(send, "Share log"));
+        send.putExtra(Intent.EXTRA_SUBJECT, "icecam_export.log");
+        send.putExtra(Intent.EXTRA_TEXT, exportContent);
+        startActivity(Intent.createChooser(send, getString(R.string.export_chooser)));
+
+        updateStatus();
+        toast("Exported with metadata → " + LogCaptureService.EXPORT_FILE_PATH);
     }
 
     private void toast(String msg) {
@@ -218,12 +307,8 @@ public class MainActivity extends Activity {
      */
     public static final class LogcatReader implements Runnable {
 
-        /** Tag must contain one of these substrings (case-insensitive except TX). */
         private static final String[] TAG_KEYWORDS = {"IceCam", "libvc", "float", "TX"};
 
-        /**
-         * threadtime line: MM-DD HH:MM:SS.mmm  PID  TID LEVEL TAG: message
-         */
         private static final Pattern THREADTIME = Pattern.compile(
                 "^\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}\\.\\d{3}\\s+\\d+\\s+\\d+\\s+."
                         + "\\s+([^:]+):\\s.*");
@@ -232,11 +317,19 @@ public class MainActivity extends Activity {
             void onLogLine(String line);
         }
 
+        /** Optional callbacks for reader lifecycle (life indicator). */
+        public interface Lifecycle {
+            void onReaderStarted();
+            void onReaderStopped();
+        }
+
         private final Listener listener;
+        private final Lifecycle lifecycle;
         private volatile boolean running = true;
 
-        public LogcatReader(Listener listener) {
+        public LogcatReader(Listener listener, Lifecycle lifecycle) {
             this.listener = listener;
+            this.lifecycle = lifecycle;
         }
 
         public void stop() {
@@ -248,6 +341,7 @@ public class MainActivity extends Activity {
             while (running) {
                 Process process = null;
                 try {
+                    notifyStarted();
                     process = new ProcessBuilder("logcat", "-v", "threadtime")
                             .redirectErrorStream(true)
                             .start();
@@ -264,6 +358,7 @@ public class MainActivity extends Activity {
                 } catch (Exception ignored) {
                     // logcat process died — loop restarts below
                 } finally {
+                    notifyStopped();
                     if (process != null) {
                         process.destroy();
                     }
@@ -272,6 +367,19 @@ public class MainActivity extends Activity {
                 if (running) {
                     sleepQuiet(400);
                 }
+            }
+            notifyStopped();
+        }
+
+        private void notifyStarted() {
+            if (lifecycle != null) {
+                lifecycle.onReaderStarted();
+            }
+        }
+
+        private void notifyStopped() {
+            if (lifecycle != null) {
+                lifecycle.onReaderStopped();
             }
         }
 

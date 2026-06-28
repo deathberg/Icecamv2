@@ -19,11 +19,29 @@ adb shell pm grant com.icecam.logspy android.permission.POST_NOTIFICATIONS
 
 ## Usage
 
-1. Launch **IceCam-Log-Spy** — foreground service starts immediately and keeps running in background.
-2. Live logs appear in the ScrollView (UI keeps last ~800 lines for speed).
-3. **Dump** — copies full log file to clipboard (paste into Composer).
-4. **Share** — sends log text via any share target.
-5. **Clear UI** — clears on-screen buffer only; file is untouched.
+1. Tap **START** — foreground service begins NDJSON capture to `/sdcard/icecam_debug.log`.
+2. Green dot = recording; red = stopped or logcat stalled.
+3. **STOP** — halts capture (saves battery).
+4. **EXPORT** — prepends system metadata (OS, memory, IceCam processes) + Share Intent; also writes `/sdcard/icecam_export.log`.
+5. **CLEAR** — wipes log file and UI for a fresh report.
+
+## Log format (AI-friendly NDJSON)
+
+Each captured line is written as one JSON object:
+
+```json
+{"type":"log","ts":"06-28 12:00:00.123","level":"ERROR","cat":"JNI","pid":1234,"tid":5678,"tag":"IceCamNative","msg":"..."}
+```
+
+Categories: `JNI`, `BINDER`, `ERROR`, `INFO`. UI shows compact prefixes: `[ERROR][JNI] IceCamNative: ...`
+
+## Export metadata
+
+EXPORT prepends:
+- `Build.DISPLAY`, device info
+- `ActivityManager.MemoryInfo` (avail/total/low)
+- Running processes matching icecam/libvc/float/tx
+- JSON metadata line for machine parsing
 
 ## Log file
 

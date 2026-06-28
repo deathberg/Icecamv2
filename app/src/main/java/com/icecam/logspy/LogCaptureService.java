@@ -18,22 +18,37 @@ import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Foreground service that keeps log capture alive even if the UI or Binder stack dies.
- * Uses {@link MainActivity.LogcatReader} (ProcessBuilder) defined in MainActivity.java.
+ * Foreground service — log capture with explicit START/STOP control.
+ * Writes NDJSON lines via {@link StructuredLog}; broadcasts state for life indicator.
  */
-public class LogCaptureService extends Service implements MainActivity.LogcatReader.Listener {
+public class LogCaptureService extends Service
+        implements MainActivity.LogcatReader.Listener, MainActivity.LogcatReader.Lifecycle {
+
+    public static final String ACTION_CMD = "com.icecam.logspy.CMD";
+    public static final String EXTRA_COMMAND = "command";
+    public static final String CMD_START = "start";
+    public static final String CMD_STOP = "stop";
+    public static final String CMD_CLEAR = "clear";
+    public static final String CMD_STATUS = "status";
+
+    public static final String ACTION_UI_CLEAR = "com.icecam.logspy.UI_CLEAR";
 
     public static final String ACTION_LOG_LINE = "com.icecam.logspy.LOG_LINE";
     public static final String EXTRA_LINE = "line";
+
+    public static final String ACTION_STATE = "com.icecam.logspy.STATE";
+    public static final String EXTRA_RECORDING = "recording";
+    public static final String EXTRA_READER_ALIVE = "reader_alive";
 
     private static final String TAG = "IceCamLogSpy";
     private static final String CHANNEL_ID = "log_capture";
     private static final int NOTIFICATION_ID = 1;
 
-    /** Persistent log path requested in spec. */
     public static final String LOG_FILE_PATH = "/sdcard/icecam_debug.log";
+    public static final String EXPORT_FILE_PATH = "/sdcard/icecam_export.log";
 
-    private final AtomicBoolean running = new AtomicBoolean(false);
+    private final AtomicBoolean capturing = new AtomicBoolean(false);
+    private final AtomicBoolean readerAlive = new AtomicBoolean(false);
     private MainActivity.LogcatReader reader;
     private Thread readerThread;
     private BufferedWriter fileWriter;
@@ -43,23 +58,30 @@ public class LogCaptureService extends Service implements MainActivity.LogcatRea
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
-        acquireWakeLock();
-        openLogFile();
-        startCapture();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        startForeground(NOTIFICATION_ID, buildNotification());
-        if (!running.get()) {
-            startCapture();
+        if (intent != null && ACTION_CMD.equals(intent.getAction())) {
+            String cmd = intent.getStringExtra(EXTRA_COMMAND);
+            if (CMD_START.equals(cmd)) {
+                handleStart();
+            } else if (CMD_STOP.equals(cmd)) {
+                handleStop();
+            } else if (CMD_CLEAR.equals(cmd)) {
+                handleClear();
+            } else if (CMD_STATUS.equals(cmd)) {
+                broadcastState();
+            }
+        } else {
+            broadcastState();
         }
         return START_STICKY;
     }
 
     @Override
     public void onDestroy() {
-        stopCapture();
+        stopCaptureInternal();
         releaseWakeLock();
         closeLogFile();
         super.onDestroy();
@@ -71,23 +93,82 @@ public class LogCaptureService extends Service implements MainActivity.LogcatRea
     }
 
     @Override
-    public void onLogLine(String line) {
-        writeToFile(line);
-        broadcastLine(line);
-    }
-
-    private void startCapture() {
-        if (running.getAndSet(true)) {
+    public void onLogLine(String rawLine) {
+        StructuredLog.Parsed parsed = StructuredLog.parse(rawLine);
+        if (parsed == null) {
             return;
         }
-        reader = new MainActivity.LogcatReader(this);
+        String jsonLine = StructuredLog.toJsonLine(parsed);
+        String uiLine = StructuredLog.toUiLine(parsed);
+        writeToFile(jsonLine);
+        broadcastLine(uiLine);
+    }
+
+    @Override
+    public void onReaderStarted() {
+        readerAlive.set(true);
+        broadcastState();
+    }
+
+    @Override
+    public void onReaderStopped() {
+        readerAlive.set(false);
+        broadcastState();
+    }
+
+    private void handleStart() {
+        startForeground(NOTIFICATION_ID, buildNotification(true));
+        acquireWakeLock();
+        if (!openLogFile()) {
+            broadcastState();
+            return;
+        }
+        startCaptureInternal();
+        broadcastState();
+    }
+
+    private void handleStop() {
+        stopCaptureInternal();
+        releaseWakeLock();
+        writeSessionEvent("stop");
+        closeLogFile();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_DETACH);
+        } else {
+            stopForeground(false);
+        }
+        broadcastState();
+    }
+
+    private void handleClear() {
+        closeLogFile();
+        File file = new File(LOG_FILE_PATH);
+        if (file.exists()) {
+            //noinspection ResultOfMethodCallIgnored
+            file.delete();
+        }
+        clearScreenBroadcast();
+        if (capturing.get()) {
+            openLogFile();
+            writeSessionEvent("clear");
+        }
+        broadcastState();
+    }
+
+    private void startCaptureInternal() {
+        if (capturing.getAndSet(true)) {
+            return;
+        }
+        writeSessionEvent("start");
+        reader = new MainActivity.LogcatReader(this, this);
         readerThread = new Thread(reader, "logcat-reader");
         readerThread.setDaemon(true);
         readerThread.start();
     }
 
-    private void stopCapture() {
-        running.set(false);
+    private void stopCaptureInternal() {
+        capturing.set(false);
+        readerAlive.set(false);
         if (reader != null) {
             reader.stop();
         }
@@ -95,9 +176,10 @@ public class LogCaptureService extends Service implements MainActivity.LogcatRea
             readerThread.interrupt();
             readerThread = null;
         }
+        reader = null;
     }
 
-    private void openLogFile() {
+    private boolean openLogFile() {
         try {
             File file = new File(LOG_FILE_PATH);
             File parent = file.getParentFile();
@@ -105,24 +187,27 @@ public class LogCaptureService extends Service implements MainActivity.LogcatRea
                 parent.mkdirs();
             }
             fileWriter = new BufferedWriter(new FileWriter(file, true), 8192);
-            fileWriter.write("=== IceCam-Log-Spy session start ===\n");
-            fileWriter.flush();
+            return true;
         } catch (IOException e) {
             Log.e(TAG, "Cannot open " + LOG_FILE_PATH + ": " + e.getMessage());
             fileWriter = null;
+            return false;
         }
     }
 
     private void closeLogFile() {
         if (fileWriter != null) {
             try {
-                fileWriter.write("=== session end ===\n");
                 fileWriter.flush();
                 fileWriter.close();
             } catch (IOException ignored) {
             }
             fileWriter = null;
         }
+    }
+
+    private void writeSessionEvent(String event) {
+        writeToFile(StructuredLog.sessionEventJson(event));
     }
 
     private void writeToFile(String line) {
@@ -138,10 +223,24 @@ public class LogCaptureService extends Service implements MainActivity.LogcatRea
         }
     }
 
-    private void broadcastLine(String line) {
+    private void broadcastLine(String uiLine) {
         Intent intent = new Intent(ACTION_LOG_LINE);
         intent.setPackage(getPackageName());
-        intent.putExtra(EXTRA_LINE, line);
+        intent.putExtra(EXTRA_LINE, uiLine);
+        sendBroadcast(intent);
+    }
+
+    private void clearScreenBroadcast() {
+        Intent intent = new Intent(ACTION_UI_CLEAR);
+        intent.setPackage(getPackageName());
+        sendBroadcast(intent);
+    }
+
+    void broadcastState() {
+        Intent intent = new Intent(ACTION_STATE);
+        intent.setPackage(getPackageName());
+        intent.putExtra(EXTRA_RECORDING, capturing.get());
+        intent.putExtra(EXTRA_READER_ALIVE, readerAlive.get());
         sendBroadcast(intent);
     }
 
@@ -159,7 +258,7 @@ public class LogCaptureService extends Service implements MainActivity.LogcatRea
         }
     }
 
-    private Notification buildNotification() {
+    private Notification buildNotification(boolean recording) {
         Intent open = new Intent(this, MainActivity.class);
         PendingIntent pi = PendingIntent.getActivity(
                 this, 0, open,
@@ -172,16 +271,23 @@ public class LogCaptureService extends Service implements MainActivity.LogcatRea
             builder = new Notification.Builder(this);
         }
 
+        String text = recording
+                ? getString(R.string.notification_text_recording)
+                : getString(R.string.notification_text_idle);
+
         return builder
                 .setContentTitle(getString(R.string.notification_title))
-                .setContentText(getString(R.string.notification_text))
+                .setContentText(text)
                 .setSmallIcon(android.R.drawable.ic_menu_info_details)
                 .setContentIntent(pi)
-                .setOngoing(true)
+                .setOngoing(recording)
                 .build();
     }
 
     private void acquireWakeLock() {
+        if (wakeLock != null && wakeLock.isHeld()) {
+            return;
+        }
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         if (pm != null) {
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "icecam:logspy");
@@ -194,6 +300,5 @@ public class LogCaptureService extends Service implements MainActivity.LogcatRea
         if (wakeLock != null && wakeLock.isHeld()) {
             wakeLock.release();
         }
-        wakeLock = null;
     }
 }

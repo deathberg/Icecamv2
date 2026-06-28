@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">IceCam-Log-Spy</string>
-    <string name="btn_dump">Dump</string>
-    <string name="btn_share">Share</string>
-    <string name="btn_clear">Clear UI</string>
+    <string name="btn_start">START</string>
+    <string name="btn_stop">STOP</string>
+    <string name="btn_export">EXPORT</string>
+    <string name="btn_clear">CLEAR</string>
+    <string name="export_chooser">Export IceCam log</string>
     <string name="notification_title">IceCam Log Spy</string>
-    <string name="notification_text">Capturing IceCam / libvc / float / TX logs</string>
+    <string name="notification_text_recording">Recording IceCam / libvc / float / TX</string>
+    <string name="notification_text_idle">Logger idle</string>
 </resources>
