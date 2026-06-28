@@ -103,7 +103,7 @@ public final class BackendApplyQueue {
                     log.log("applyq", "first apply failed for #" + req.sequence + "; restarting daemon");
                     binder.clearCache();
                     prefs.edit().putString("IceCamState", "RECOVERING_BACKEND").apply();
-                    if (!root.ensureDaemonUp()) {
+                    if (!root.ensureDaemonUp(binder)) {
                         log.log("applyq", "daemon recovery failed for #" + req.sequence);
                     } else {
                         binder.clearCache();
@@ -131,18 +131,26 @@ public final class BackendApplyQueue {
                 long t0 = android.os.SystemClock.elapsedRealtime();
                 log.log("applyq", "legacy apply " + (retry ? "retry" : "start") + " #" + req.sequence + " source=" + req.source + " exists=" + f.exists() + " size=" + (f.exists() ? f.length() : -1L) + " path=" + req.path);
                 binder.setPreferredService(RootBootstrap.FIXED_SERVICE_NAME);
-                if (!root.ensureDaemonUp()) {
-                    IceCamLog.e(log, "applyq", "daemon not up before apply #" + req.sequence);
+                RootBootstrap.DaemonProbe pre = root.probeDaemon(binder);
+                log.log("applyq", "pre-apply probe #" + req.sequence + " " + pre);
+                if (!root.ensureDaemonUp(binder)) {
+                    IceCamLog.e(log, "applyq", "daemon not up before apply #" + req.sequence + " probe=" + pre);
                     prefs.edit().putBoolean("ReplacementActive", false).putString("IceCamState", "DAEMON_DOWN").apply();
                     CommandBus.get(context).reloadFromPrefs();
                     binder.clearCache();
                     return false;
                 }
                 binder.clearCache();
-                if (!root.ensureCameraHooks()) {
-                    IceCamLog.e(log, "applyq", "camera hooks not ready for apply #" + req.sequence);
+                RootBootstrap.DaemonProbe ready = root.probeDaemon(binder);
+                log.log("applyq", "daemon ready #" + req.sequence + " " + ready);
+                if (!ready.binderReachable) {
+                    IceCamLog.e(log, "applyq", "binder unreachable after ensureDaemonUp #" + req.sequence + " " + ready);
+                    prefs.edit().putBoolean("ReplacementActive", false).putString("IceCamState", "BINDER_DOWN").apply();
+                    CommandBus.get(context).reloadFromPrefs();
+                    binder.clearCache();
+                    return false;
                 }
-                sleepMs(800);
+                sleepMs(400);
                 if (!MediaTransformer.isVideoPath(req.path) && !req.path.contains("/baked/")) {
                     IceCamLog.w(log, "applyq", "image path — expect baked JPEG, src=" + req.path);
                 }

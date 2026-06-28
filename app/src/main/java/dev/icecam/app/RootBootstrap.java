@@ -3,6 +3,8 @@ package dev.icecam.app;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import java.util.Locale;
+
 public final class RootBootstrap {
     public static final String FIXED_SERVICE_NAME = "privsam_service";
     private static final Object BOOT_LOCK = new Object();
@@ -55,22 +57,51 @@ public final class RootBootstrap {
         }
     }
 
+    /** Result of a multi-signal daemon health probe. */
+    public static final class DaemonProbe {
+        public final boolean vcplaxRunning;
+        public final boolean serviceRegistered;
+        public final boolean binderReachable;
+        public final String vcplaxPid;
+
+        DaemonProbe(boolean vcplaxRunning, boolean serviceRegistered, boolean binderReachable, String vcplaxPid) {
+            this.vcplaxRunning = vcplaxRunning;
+            this.serviceRegistered = serviceRegistered;
+            this.binderReachable = binderReachable;
+            this.vcplaxPid = vcplaxPid == null ? "" : vcplaxPid;
+        }
+
+        public boolean healthy() {
+            return vcplaxRunning && serviceRegistered && binderReachable;
+        }
+
+        @Override
+        public String toString() {
+            return "pid=" + (vcplaxPid.isEmpty() ? "none" : vcplaxPid)
+                    + " vcplax=" + vcplaxRunning
+                    + " service=" + serviceRegistered
+                    + " binder=" + binderReachable;
+        }
+    }
+
     /**
-     * Ensure privsam_service is registered. Returns true when service responds.
+     * Ensure privsam_service is registered and binder responds.
      * Safe to call from apply queue — uses BOOT_LOCK and waits for daemon.
      */
-    public boolean ensureDaemonUp() {
+    public boolean ensureDaemonUp(VliveBinderClient binderProbe) {
         synchronized (BOOT_LOCK) {
-            if (serviceAlive()) {
-                log.log("daemon", "already up service=" + FIXED_SERVICE_NAME);
+            DaemonProbe probe = probeDaemon(binderProbe);
+            if (probe.healthy()) {
+                log.log("daemon", "already up " + probe);
                 return true;
             }
-            log.log("daemon", "service down — full bootstrap");
+            log.log("daemon", "daemon down (" + probe + ") — full bootstrap");
             NativeExtractor.Result ex = NativeExtractor.extract(ctx, log);
             String script = deployScript(ex.dir.getAbsolutePath(), serverName(), ex.abi, true, false);
             Shell.Result r = Shell.su(script);
             log.logBlock("daemon", r.all());
-            boolean up = waitForService(12000);
+            binderProbe.clearCache();
+            boolean up = waitForDaemon(12000, binderProbe);
             if (!up) {
                 Shell.Result diag = Shell.su(
                         "echo ---vcplax-ps---; ps -A | grep -i vcplax || true\n" +
@@ -83,9 +114,17 @@ public final class RootBootstrap {
         }
     }
 
-    /** Deploy /data/libvc.so + restart cameraserver (vcplax stays up). */
+    /**
+     * Deploy hook libs and restart cameraserver. Only safe when vcplax is NOT running —
+     * killing cameraserver while vcplax is alive can crash the daemon on MIUI.
+     * Prefer bootstrap-time inject (deployScript post-launch-inject).
+     */
     public boolean ensureCameraHooks() {
         synchronized (BOOT_LOCK) {
+            if (vcplaxRunning()) {
+                log.log("inject", "skip cameraserver restart — vcplax pid=" + vcplaxPid() + " (would destabilize daemon)");
+                return rootHookLibsPresent();
+            }
             NativeExtractor.Result ex = NativeExtractor.extract(ctx, log);
             String script = deployRootHooksScript(ex.dir.getAbsolutePath()) +
                     "echo ---inject-cameraserver---\n" +
@@ -100,6 +139,18 @@ public final class RootBootstrap {
             if (!ok) IceCamLog.e(log, "inject", "camera hook deploy failed");
             return ok;
         }
+    }
+
+    public DaemonProbe probeDaemon(VliveBinderClient binderProbe) {
+        String pid = vcplaxPid();
+        boolean running = pid != null && !pid.isEmpty();
+        boolean registered = serviceRegistered();
+        boolean binderOk = false;
+        if (binderProbe != null && registered) {
+            binderProbe.clearCache();
+            binderOk = binderProbe.connected();
+        }
+        return new DaemonProbe(running, registered, binderOk, pid);
     }
 
     public boolean rootHookLibsPresent() {
@@ -119,6 +170,10 @@ public final class RootBootstrap {
 
     public void restartCameraServer() {
         synchronized (BOOT_LOCK) {
+            if (vcplaxRunning()) {
+                log.log("inject", "refuse cameraserver restart while vcplax pid=" + vcplaxPid());
+                return;
+            }
             Shell.Result r = Shell.su(
                     "echo ---restart-cameraserver---\n" +
                     "killall cameraserver 2>/dev/null || true\n" +
@@ -128,18 +183,47 @@ public final class RootBootstrap {
         }
     }
 
+    /** @deprecated use {@link #serviceRegistered()} — old check matched "not found" via substring "found". */
+    @Deprecated
     public boolean serviceAlive() {
-        Shell.Result r = Shell.su("service check " + FIXED_SERVICE_NAME + " 2>&1");
-        return (r.out + r.err).toLowerCase().contains("found");
+        return serviceRegistered();
     }
 
-    private boolean waitForService(long timeoutMs) {
+    /** True when `service check privsam_service` reports the service is registered. */
+    public boolean serviceRegistered() {
+        Shell.Result r = Shell.su("service check " + FIXED_SERVICE_NAME + " 2>&1");
+        return parseServiceCheckFound(r.out + r.err);
+    }
+
+    static boolean parseServiceCheckFound(String output) {
+        if (output == null) return false;
+        String s = output.toLowerCase(Locale.ROOT);
+        if (s.contains("not found")) return false;
+        return s.contains(": found") || s.endsWith("found");
+    }
+
+    public boolean vcplaxRunning() {
+        String pid = vcplaxPid();
+        return pid != null && !pid.isEmpty();
+    }
+
+    public String vcplaxPid() {
+        Shell.Result r = Shell.su(
+                "pidof vcplax 2>/dev/null || pidof /data/vcplax 2>/dev/null || pidof /data/camera/vcplax 2>/dev/null || true");
+        String pid = (r.out + r.err).trim();
+        if (pid.isEmpty()) return "";
+        int sp = pid.indexOf(' ');
+        return sp > 0 ? pid.substring(0, sp) : pid;
+    }
+
+    private boolean waitForDaemon(long timeoutMs, VliveBinderClient binderProbe) {
         long deadline = android.os.SystemClock.elapsedRealtime() + timeoutMs;
         while (android.os.SystemClock.elapsedRealtime() < deadline) {
-            if (serviceAlive()) return true;
+            DaemonProbe p = probeDaemon(binderProbe);
+            if (p.healthy()) return true;
             try { Thread.sleep(400); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return false; }
         }
-        return serviceAlive();
+        return probeDaemon(binderProbe).healthy();
     }
 
     private static String deployScript(String src, String server, String abi, boolean launchDaemon, boolean restartCameraServer) {
@@ -195,7 +279,7 @@ public final class RootBootstrap {
             sb.append("echo spawned_pid=$VPID exec=$EXEC\n");
             sb.append("for i in 1 2 3 4 5 6 7 8 9 10 11 12; do\n");
             sb.append("  sleep 1\n");
-            sb.append("  service check $SERVER 2>&1 | grep -qi found && break\n");
+            sb.append("  sc=$(service check $SERVER 2>&1); echo \"$sc\"; echo \"$sc\" | grep -q ': found' && break\n");
             sb.append("done\n");
             sb.append("echo ---process---\n");
             sb.append("ps -A | grep -i vcplax || ps | grep -i vcplax || true\n");
@@ -269,6 +353,7 @@ public final class RootBootstrap {
                 "echo server=$SERVER\n" +
                 "echo ---selinux---\ngetenforce 2>/dev/null || true\n" +
                 "echo ---process---\nps -A | grep -iE 'vcplax|cameraserver' || true\n" +
+                "echo ---vcplax-pid---\npidof vcplax 2>/dev/null || pidof /data/vcplax 2>/dev/null || echo none\n" +
                 "echo ---expected-service---\nservice check $SERVER 2>&1 || true\n" +
                 "echo ---hook-check---\n" +
                 "test -f /data/libvc.so && test -f /data/vcplax && echo HOOK_ROOT_OK || echo HOOK_ROOT_MISSING\n" +

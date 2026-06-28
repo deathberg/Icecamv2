@@ -48,6 +48,12 @@ public final class DiagnosticDumper {
 
         sb.append("\n--- binder-java ---\n");
         try { sb.append(binder != null ? binder.diagnostics() : "binder=null\n"); } catch (Throwable t) { sb.append("binder diagnostics failed: ").append(t).append('\n'); }
+        try {
+            RootBootstrap rb = new RootBootstrap(ctx, log);
+            sb.append("daemonProbe=").append(rb.probeDaemon(binder)).append('\n');
+            sb.append("serviceRegistered=").append(rb.serviceRegistered()).append('\n');
+            sb.append("vcplaxPid=").append(rb.vcplaxPid()).append('\n');
+        } catch (Throwable t) { sb.append("daemon probe failed: ").append(t).append('\n'); }
 
         sb.append("\n--- root-native ---\n");
         try {
@@ -55,6 +61,7 @@ public final class DiagnosticDumper {
                     "echo ---id---; id; " +
                     "echo ---getenforce---; getenforce 2>/dev/null; " +
                     "echo ---service-check---; service check privsam_service 2>&1; " +
+                    "echo ---vcplax-pid---; pidof vcplax 2>/dev/null || pidof /data/vcplax 2>/dev/null || echo none; " +
                     "echo ---process---; ps -A | grep -iE 'vcplax|cameraserver' 2>/dev/null; " +
                     "echo ---lib-sizes---; wc -c /data/libvc.so /data/libvc++.so /data/camera/libvc.so /data/camera/vcplax 2>&1; " +
                     "echo ---hook-check---; test -f /data/libvc.so && test -f /data/libvc++.so && echo HOOK_ROOT_OK || echo HOOK_ROOT_MISSING; " +
