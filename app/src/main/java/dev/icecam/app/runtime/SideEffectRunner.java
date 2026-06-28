@@ -105,6 +105,16 @@ public final class SideEffectRunner {
     private boolean sendTransformBestEffort(TransformState s) {
         try {
             binder.setPreferredService(RootBootstrap.FIXED_SERVICE_NAME);
+            if (!binder.connected()) {
+                if (log != null) log.log("runtime", "TX24 skipped: binder down " + binder.lastError());
+                return false;
+            }
+            boolean active = context.getSharedPreferences("app_config", Context.MODE_PRIVATE)
+                    .getBoolean("ReplacementActive", false);
+            if (!active) {
+                if (log != null) log.log("runtime", "TX24 skipped: stream inactive (UI-only transform)");
+                return false;
+            }
             int r = binder.setTransform(s);
             if (log != null) log.log("runtime", "TX24 transform result=" + r + " " + s.summary());
             return r >= 0;

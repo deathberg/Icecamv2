@@ -96,12 +96,24 @@ public final class RootBootstrap {
                 return true;
             }
             log.log("daemon", "daemon down (" + probe + ") — full bootstrap");
+            if (!rootHookLibsPresent()) {
+                log.log("daemon", "root hooks missing — will redeploy during bootstrap");
+            }
             NativeExtractor.Result ex = NativeExtractor.extract(ctx, log);
             String script = deployScript(ex.dir.getAbsolutePath(), serverName(), ex.abi, true, false);
             Shell.Result r = Shell.su(script);
             log.logBlock("daemon", r.all());
             binderProbe.clearCache();
             boolean up = waitForDaemon(12000, binderProbe);
+            if (!up) {
+                log.log("daemon", "first bootstrap failed — retrying once");
+                NativeExtractor.Result ex2 = NativeExtractor.extract(ctx, log);
+                String retryScript = deployScript(ex2.dir.getAbsolutePath(), serverName(), ex2.abi, true, false);
+                Shell.Result r2 = Shell.su(retryScript);
+                log.logBlock("daemon-retry", r2.all());
+                binderProbe.clearCache();
+                up = waitForDaemon(12000, binderProbe);
+            }
             if (!up) {
                 Shell.Result diag = Shell.su(
                         "echo ---vcplax-ps---; ps -A | grep -i vcplax || true\n" +
@@ -268,7 +280,13 @@ public final class RootBootstrap {
             sb.append("ps -A | grep -i cameraserver || true\n");
         }
         if (launchDaemon) {
+            sb.append("echo ---pre-launch-inject---\n");
+            sb.append("killall cameraserver 2>/dev/null || true\n");
+            sb.append("sleep 2\n");
+            sb.append("ps -A | grep -i cameraserver || true\n");
             sb.append("rm -f /data/camera/vcplax.log /data/camera/vcplax.err\n");
+            sb.append("pkill -f frida-inject 2>/dev/null || true\n");
+            sb.append("pkill frida-server 2>/dev/null || true\n");
             sb.append("export LD_LIBRARY_PATH=/data/camera:/data:/system/lib64:/system_ext/lib64:/vendor/lib64:/system/lib:/system_ext/lib:/vendor/lib:$LD_LIBRARY_PATH\n");
             sb.append("export ICECAM_SERVER=$SERVER\n");
             sb.append("EXEC=/data/vcplax\n");
@@ -287,11 +305,8 @@ public final class RootBootstrap {
             sb.append("service check $SERVER 2>&1 || true\n");
             sb.append("echo ---service-list-filtered---\n");
             sb.append("service list 2>/dev/null | grep -iE \"$SERVER|vcplax\" || true\n");
-            sb.append("echo ---post-launch-inject---\n");
-            sb.append("sleep 1\n");
-            sb.append("killall cameraserver 2>/dev/null || true\n");
-            sb.append("sleep 2\n");
-            sb.append("ps -A | grep -i cameraserver || true\n");
+            sb.append("echo ---vcplax-alive-after-launch---\n");
+            sb.append("pidof vcplax 2>/dev/null || pidof /data/vcplax 2>/dev/null || echo vcplax_gone\n");
         }
         sb.append("echo ---files---\n");
         sb.append("ls -l /data/camera 2>&1; ls -l /data/vcplax /data/libvc.so /data/libvc++.so 2>&1 || true\n");
@@ -329,6 +344,9 @@ public final class RootBootstrap {
                 "echo restore_server=$SERVER\n" +
                 "id\n" +
                 "getenforce 2>/dev/null || true\n" +
+                "echo ---stop-frida---\n" +
+                "pkill -f frida-inject 2>/dev/null || true\n" +
+                "pkill frida-server 2>/dev/null || true\n" +
                 "echo ---soft-stop-binder---\n" +
                 "service check $SERVER 2>&1 || true\n" +
                 "echo ---kill-daemon---\n" +
@@ -336,6 +354,10 @@ public final class RootBootstrap {
                 "pkill -f /data/vcplax 2>/dev/null || true\n" +
                 "pkill -f /data/camera/vcplax 2>/dev/null || true\n" +
                 "sleep 1\n" +
+                "echo ---restart-cameraserver-clean---\n" +
+                "killall cameraserver 2>/dev/null || true\n" +
+                "sleep 2\n" +
+                "ps -A | grep -i cameraserver || true\n" +
                 "echo ---after-process---\n" +
                 "ps -A | grep -i vcplax || ps | grep -i vcplax || true\n" +
                 "echo ---after-service---\n" +
