@@ -4,10 +4,16 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -15,15 +21,27 @@ public final class AppLogger {
     public interface Listener { void onLogChanged(String text); }
 
     private static final int MAX = 48000;
-    private static final int EXPORT_MAX_LINES = 180;
+    private static final int EXPORT_MAX_LINES = 220;
     private static final long PROCESS_START_MS = SystemClock.elapsedRealtime();
     private static final AtomicLong SEQ = new AtomicLong(1L);
+    private static volatile AppLogger instance;
     private final StringBuilder buffer = new StringBuilder();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final File file;
     private Listener listener;
 
-    public AppLogger(android.content.Context ctx) {
+    public static AppLogger get(android.content.Context ctx) {
+        AppLogger local = instance;
+        if (local == null) {
+            synchronized (AppLogger.class) {
+                local = instance;
+                if (local == null) instance = local = new AppLogger(ctx.getApplicationContext());
+            }
+        }
+        return local;
+    }
+
+    private AppLogger(android.content.Context ctx) {
         file = new File(ctx.getExternalFilesDir(null), "icecam-runtime.log");
         log("logger", "file=" + file.getAbsolutePath());
     }
@@ -32,22 +50,53 @@ public final class AppLogger {
     public File file() { return file; }
     public String text() { return buffer.toString(); }
 
-    /** Recent lines for export — skips noisy root service-list spam. */
+    /** Recent lines for export — reads unified on-disk log so applyq/tx/runtime are included. */
     public String exportRing() {
+        String fromFile = tailFromFile(EXPORT_MAX_LINES);
+        if (fromFile != null && fromFile.length() > 0) return fromFile;
         synchronized (buffer) {
-            String[] lines = buffer.toString().split("\n");
+            return filterLines(buffer.toString().split("\n"), EXPORT_MAX_LINES);
+        }
+    }
+
+    private String tailFromFile(int maxLines) {
+        try {
+            if (file == null || !file.exists() || file.length() == 0) return "";
+            List<String> all = new ArrayList<>();
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    if (line.length() > 0) all.add(line);
+                }
+            }
+            if (all.isEmpty()) return "";
+            int start = Math.max(0, all.size() - (maxLines * 3));
             StringBuilder out = new StringBuilder();
             int kept = 0;
-            for (int i = lines.length - 1; i >= 0 && kept < EXPORT_MAX_LINES; i--) {
-                String line = lines[i];
-                if (line.length() == 0) continue;
+            for (int i = all.size() - 1; i >= start && kept < maxLines; i--) {
+                String line = all.get(i);
                 if (isNoisyRootLine(line)) continue;
                 out.insert(0, line + '\n');
                 kept++;
             }
-            if (kept == 0) return buffer.toString();
             return out.toString();
+        } catch (Throwable ignored) {
+            return "";
         }
+    }
+
+    private static String filterLines(String[] lines, int maxLines) {
+        StringBuilder out = new StringBuilder();
+        int kept = 0;
+        for (int i = lines.length - 1; i >= 0 && kept < maxLines; i--) {
+            String line = lines[i];
+            if (line.length() == 0) continue;
+            if (isNoisyRootLine(line)) continue;
+            out.insert(0, line + '\n');
+            kept++;
+        }
+        if (kept == 0) return "";
+        return out.toString();
     }
 
     private static boolean isNoisyRootLine(String line) {

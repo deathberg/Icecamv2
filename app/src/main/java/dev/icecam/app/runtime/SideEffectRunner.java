@@ -5,6 +5,7 @@ import dev.icecam.app.AppLogger;
 import dev.icecam.app.BackendApplyQueue;
 import dev.icecam.app.IceCamLog;
 import dev.icecam.app.RootBootstrap;
+import dev.icecam.app.MediaTransformer;
 import dev.icecam.app.TransformState;
 import dev.icecam.app.VliveBinderClient;
 import java.util.concurrent.ExecutorService;
@@ -38,7 +39,7 @@ public final class SideEffectRunner {
                     try {
                         IceCamLog.marker(log, "COMMIT", "source=" + c.source.name());
                         ok = sendTransformBestEffort(state.transform);
-                        String path = state.media.originalPath.length() > 0 ? state.media.originalPath : state.media.playPath;
+                        String path = resolveApplyPath(state);
                         if (path.length() > 0) BackendApplyQueue.get(context).enqueue(path, "runtime-commit-" + c.source.name().toLowerCase(), true);
                     } catch (Throwable t) { if (log != null) log.log("runtime", "commit side effect failed #" + c.id + ": " + t); }
                     bus.dispatch(RuntimeCommand.opFinished(opId, ok));
@@ -53,7 +54,7 @@ public final class SideEffectRunner {
                         binder.setPreferredService(RootBootstrap.FIXED_SERVICE_NAME);
                         if (!binder.connected()) { root.bootstrap(); binder.clearCache(); sleep(350); }
                         ok = sendTransformBestEffort(state.transform);
-                        String path = state.media.originalPath.length() > 0 ? state.media.originalPath : state.media.playPath;
+                        String path = resolveApplyPath(state);
                         if (path.length() > 0) {
                             BackendApplyQueue.get(context).enqueue(path, "runtime-start-" + c.source.name().toLowerCase(), true);
                             ok = true;
@@ -76,6 +77,7 @@ public final class SideEffectRunner {
                                 .putBoolean("ReplacementActive", false)
                                 .putString("IceCamState", "RESTORED")
                                 .apply();
+                        bus.reloadFromPrefs();
                         ok = true;
                     } catch (Throwable t) { IceCamLog.e(log, "runtime", "restore failed #" + c.id + ": " + t); }
                     bus.dispatch(RuntimeCommand.opFinished(opId, ok));
@@ -83,6 +85,22 @@ public final class SideEffectRunner {
                 break;
             default: break;
         }
+    }
+
+    private String resolveApplyPath(AppState state) {
+        String path = state.media.originalPath.length() > 0 ? state.media.originalPath : state.media.playPath;
+        if (path.length() == 0) return "";
+        if (MediaTransformer.isImagePath(path)) {
+            String baked = MediaTransformer.bakeImage(context, path, state.transform, log);
+            if (baked != null && baked.length() > 0) {
+                context.getSharedPreferences("app_config", Context.MODE_PRIVATE).edit()
+                        .putString("PlayFileMp4", baked)
+                        .putInt("PlayFileType", 1)
+                        .apply();
+                return baked;
+            }
+        }
+        return path;
     }
 
     private boolean sendTransformBestEffort(TransformState s) {

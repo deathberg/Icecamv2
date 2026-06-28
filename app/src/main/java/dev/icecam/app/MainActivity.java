@@ -48,7 +48,7 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
-        logger = new AppLogger(this);
+        logger = AppLogger.get(this);
         root = new RootBootstrap(this, logger);
         binder = new VliveBinderClient(logger);
         controller = TransformController.get(this);
@@ -143,7 +143,7 @@ public class MainActivity extends Activity {
         body.addView(bigButton("▶  PLAY / COMMIT", v -> {
             IceCamLog.marker(logger, "BTN_COMMIT", "slot=M" + activeSlot());
             controller.commit(TransformController.Source.MAIN, "play-commit");
-            refreshAll();
+            refreshDelayed();
         }, UiKit.PANEL_3), fullBtn());
 
         mediaLabel = text("", 12, false, UiKit.MUTED);
@@ -228,6 +228,7 @@ public class MainActivity extends Activity {
     private void selectSlot(int slot) {
         String path = prefs.getString(slotKey(slot), "");
         if (path == null || path.length() == 0) { pickIntoSlot(slot); return; }
+        prefs.edit().putInt("PlayFileType", MediaTransformer.isVideoPath(path) ? 2 : 1).apply();
         controller.selectMedia(TransformController.Source.MAIN, slot, path);
         logger.log("media", "active slot M" + slot + " path=" + path);
         lastPreviewKey = "";
@@ -275,7 +276,15 @@ public class MainActivity extends Activity {
             IceCamLog.marker(logger, "BTN_START", "slot=M" + activeSlot());
             controller.startReplacement(TransformController.Source.MAIN);
         }
+        refreshDelayed();
+    }
+
+    private void refreshDelayed() {
         refreshAll();
+        if (startRestoreButton == null) return;
+        startRestoreButton.postDelayed(this::refreshAll, 700);
+        startRestoreButton.postDelayed(this::refreshAll, 1700);
+        startRestoreButton.postDelayed(this::refreshAll, 3500);
     }
 
     private void showAdvanced() {

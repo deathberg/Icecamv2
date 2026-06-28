@@ -32,7 +32,7 @@ public final class ReCaptureActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        logger = new AppLogger(this);
+        logger = AppLogger.get(this);
         capture = new FridaReCapture(this, logger);
 
         LinearLayout root = new LinearLayout(this);

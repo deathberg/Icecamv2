@@ -36,16 +36,19 @@ public final class TransformReducer {
             case SET_LOOP: next = state.withMedia(state.media.withLoop(c.boolValue)); break;
             case OP_FINISHED: {
                 RuntimeTypes.OperationState ops = state.backend.operations.finish(c.opId);
-                String phase;
+                String phase = state.backend.phase;
                 boolean replacementActive = state.backend.replacementActive;
                 if (c.opId != null && c.opId.startsWith("restore-")) {
                     phase = "RESTORED";
                     replacementActive = false;
                 } else if (c.opId != null && c.opId.startsWith("start-")) {
-                    phase = c.boolValue ? "REPLACEMENT_ACTIVE" : "PLAY_ERROR";
-                    replacementActive = c.boolValue;
+                    phase = c.boolValue ? "START_QUEUED" : "PLAY_ERROR";
+                } else if (c.opId != null && c.opId.startsWith("commit-")) {
+                    phase = c.boolValue ? "COMMIT_QUEUED" : "PLAY_ERROR";
+                } else if (c.boolValue) {
+                    phase = "REPLACEMENT_ACTIVE";
                 } else {
-                    phase = c.boolValue ? "REPLACEMENT_ACTIVE" : "PLAY_ERROR";
+                    phase = "PLAY_ERROR";
                 }
                 next = state.withBackend(state.backend.withOperations(ops).withActive(replacementActive, phase));
                 break;

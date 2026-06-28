@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import dev.icecam.app.runtime.CommandBus;
 
 /**
  * Process-wide serialized backend apply queue.
@@ -62,7 +63,7 @@ public final class BackendApplyQueue {
     private BackendApplyQueue(Context context) {
         this.context = context;
         this.prefs = context.getSharedPreferences("app_config", Context.MODE_PRIVATE);
-        this.log = new AppLogger(context);
+        this.log = AppLogger.get(context);
         this.root = new RootBootstrap(context, log);
         this.binder = new VliveBinderClient(log);
         this.binder.setPreferredService(RootBootstrap.FIXED_SERVICE_NAME);
@@ -134,9 +135,10 @@ public final class BackendApplyQueue {
                     sleepMs(250);
                 }
                 if (!MediaTransformer.isVideoPath(req.path)) {
-                    IceCamLog.w(log, "applyq", "media is not video — TX14/TX11 expect MP4/RTMP, path=" + req.path);
+                    IceCamLog.w(log, "applyq", "image path — baking JPEG before TX14/TX11, src=" + req.path);
                 }
-                int playMode = MediaTransformer.isVideoPath(req.path) ? 1 : 1;
+                int playMode = prefs.getInt("PlayFileType", 0);
+                if (playMode <= 0) playMode = MediaTransformer.isVideoPath(req.path) ? 2 : 1;
                 long tx14Start = android.os.SystemClock.elapsedRealtime();
                 int mode = binder.setModeString(playMode, req.path);
                 long tx14Ms = android.os.SystemClock.elapsedRealtime() - tx14Start;
@@ -152,6 +154,7 @@ public final class BackendApplyQueue {
                         .putBoolean("ReplacementActive", active)
                         .putString("IceCamState", active ? "REPLACEMENT_ACTIVE" : "PLAY_ERROR")
                         .apply();
+                CommandBus.get(context).reloadFromPrefs();
                 IceCamLog.i(log, "applyq", "apply #" + req.sequence
                         + " TX14=" + mode + (modeOk ? "(ok)" : "(fail)") + "/" + tx14Ms + "ms"
                         + " TX11=" + play + (playOk ? "(ok)" : "(fail)") + "/" + tx11Ms + "ms"
@@ -160,6 +163,7 @@ public final class BackendApplyQueue {
                 return active;
             } catch (Throwable t) {
                 prefs.edit().putBoolean("ReplacementActive", false).putString("IceCamState", "PLAY_ERROR").apply();
+                CommandBus.get(context).reloadFromPrefs();
                 binder.clearCache();
                 log.log("applyq", "legacy apply exception #" + req.sequence + ": " + t);
                 return false;

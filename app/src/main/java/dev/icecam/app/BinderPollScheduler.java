@@ -28,7 +28,7 @@ public final class BinderPollScheduler {
 
     private BinderPollScheduler(Context context) {
         app = context.getApplicationContext();
-        log = new AppLogger(app);
+        log = AppLogger.get(app);
         binder = new VliveBinderClient(log);
         binder.setPreferredService(RootBootstrap.FIXED_SERVICE_NAME);
         prefs = app.getSharedPreferences("app_config", Context.MODE_PRIVATE);

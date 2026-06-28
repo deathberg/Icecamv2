@@ -22,7 +22,7 @@ public final class CommandBus {
     private final AppLogger log;
 
     private CommandBus(Context context) {
-        log = new AppLogger(context);
+        log = AppLogger.get(context);
         persistence = new Persistence(context);
         store = new StateStore(persistence.load());
         recorder = new FlightRecorder(context, log);
@@ -31,6 +31,9 @@ public final class CommandBus {
     }
     public StateStore store() { return store; }
     public AppState state() { return store.get(); }
+    public void reloadFromPrefs() {
+        store.set(persistence.load());
+    }
     public FlightRecorder recorder() { return recorder; }
 
     public void dispatch(RuntimeCommand c) {

@@ -46,7 +46,7 @@ public class FloatService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         prefs = getSharedPreferences("app_config", MODE_PRIVATE);
-        log = new AppLogger(this);
+        log = AppLogger.get(this);
         binder = new VliveBinderClient(log);
         binder.setPreferredService(RootBootstrap.FIXED_SERVICE_NAME);
         txExecutor = Executors.newSingleThreadExecutor(r -> new Thread(r, "float-tx22"));
